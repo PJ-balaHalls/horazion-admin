@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/store/useAuthStore';
 
+// [FE-HZ-004] Integração de Login com Zero Trust e Redirecionamento Estrito
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,18 +19,30 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
-      setError('Credenciais inválidas. O sistema operou com Zero Trust e negou o acesso.');
+      if (error) {
+        // A mensagem expõe o conceito de Zero Trust ao usuário (transparência de segurança)
+        setError('Credenciais inválidas. O sistema operou com Zero Trust e negou o acesso.');
+        setLoading(false);
+        return;
+      } 
+      
+      if (data.session) {
+        setSession(data.session);
+        // Busca a identidade do usuário (HorizionID e Role Estelar)
+        await fetchProfile(data.session.user.id);
+        
+        // Se houver sucesso, encaminha para o Centro de Gravidade (Rota raiz)
+        router.push('/');
+      }
+    } catch (err) {
+      setError('Falha crítica de comunicação com o ecossistema Horazion.');
       setLoading(false);
-    } else if (data.session) {
-      setSession(data.session);
-      await fetchProfile(data.session.user.id);
-      router.push('/');
     }
   };
 
