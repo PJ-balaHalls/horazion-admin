@@ -1,4 +1,4 @@
-import { Activity, Users, AlertTriangle } from 'lucide-react';
+import { Activity, Users, AlertTriangle, ShieldAlert } from 'lucide-react';
 
 export default function DashboardHome() {
   return (
