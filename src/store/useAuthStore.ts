@@ -37,6 +37,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       
     if (!error && data) {
       set({ profile: data as Profile });
+    } else {
+      console.error("Erro na busca da identidade no Core:", error);
     }
   },
 

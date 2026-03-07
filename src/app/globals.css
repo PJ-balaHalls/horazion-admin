@@ -2,9 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* CSS Nativo como fallback seguro e sem causar conflitos com o Turbopack */
 body {
-  background-color: #FFFFFF;
+  background-color: #F2F2F2;
   color: #545454;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

@@ -1,0 +1,1 @@
+export default function Page() { return <div className="p-8 bg-horazion-white rounded-hz border border-horazion-light shadow-sm"><h1 className="text-2xl font-bold text-horazion-black">Módulo em Breve</h1><p className="text-horazion-gray mt-2">Esta funcionalidade está no roadmap arquitetural e será integrada em breve.</p></div>; }
