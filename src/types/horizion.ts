@@ -1,22 +1,28 @@
-// Mapeamento exato do Enum criado no Banco de Dados
 export type StarRole = 'sirius' | 'canopus' | 'arcturus' | 'vega' | 'altair' | 'polaris' | 'sun';
 
-export interface HorizionUser {
-  id: string; // auth.users.id
-  horizion_id: string; // Ex: HZ-9F3A-2K8Q-MR7D
-  full_name: string;
-  email: string;
-  star_role: StarRole;
-  avatar_url?: string | null;
-  is_active: boolean;
+export interface CustomFieldDefinition {
+  id: string;
+  field_name: string;
+  field_label: string;
+  field_type: 'text' | 'number' | 'date';
+  created_at: string;
 }
 
-// Estrutura padrão da nossa Biblioteca de Erros (Horizion Codex)
-export interface HorizionError {
-  error_code: string;
-  system_message: string;
-  user_message: string;
-  explanation: string;
-  solution: string;
-  severity: 'info' | 'warning' | 'error' | 'critical';
+export interface HorizionUser {
+  id: string;
+  horizion_id: string;
+  full_name: string;
+  email: string;
+  role: StarRole;
+  avatar_url?: string | null;
+  is_active: boolean;
+  cep?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  lat?: number;
+  lng?: number;
+  custom_data: Record<string, string | number | boolean>;
+  created_at: string;
 }
