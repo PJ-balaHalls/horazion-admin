@@ -1,41 +1,36 @@
 import { supabase } from '@/lib/supabase';
-import { Profile } from '@/types/horizion';
+import { Profile, StellarRole } from '@/types/horizion';
 
-/**
- * [CORE-HZ-015] Serviço de Identidades - Horazion Core
- * Exportação nomeada para garantir integridade no build SPA.
- */
 export const userService = {
-  async getAllProfiles() {
+  /**
+   * Gera um HorizionID único baseado no nome
+   */
+  generateID(name: string): string {
+    const slug = name.split(' ')[0].toUpperCase();
+    const random = Math.floor(1000 + Math.random() * 9000);
+    return `HZ-${slug}-${random}`;
+  },
+
+  /**
+   * Busca endereço via API externa
+   */
+  async fetchAddress(zip: string) {
+    const res = await fetch(`https://viacep.com.br/ws/${zip}/json/`);
+    return res.json();
+  },
+
+  async getAllProfiles(): Promise<Profile[]> {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('role', { ascending: true });
     if (error) throw error;
     return data as Profile[];
   },
 
-  async updateProfile(id: string, updates: Partial<Profile>) {
-    const { error } = await supabase.from('profiles').update(updates).eq('id', id);
+  async createProfile(profile: any) {
+    const { data, error } = await supabase.from('profiles').insert([profile]).select().single();
     if (error) throw error;
-  },
-
-  async getGrowthStats() {
-    // Tenta buscar dados agregados por mês. Fallback seguro caso a RPC não exista.
-    const { data, error } = await supabase.from('profiles').select('created_at');
-    if (error || !data) {
-      return [
-        { name: 'Jan', count: 400 }, { name: 'Fev', count: 850 },
-        { name: 'Mar', count: 1200 }, { name: 'Abr', count: 2100 }
-      ];
-    }
-
-    // Agregação básica no cliente para o gráfico (pode ser movida para RPC no futuro)
-    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun'];
-    const stats = months.map((m, i) => ({
-      name: m,
-      count: data.filter(d => new Date(d.created_at).getMonth() <= i).length
-    }));
-    return stats;
+    return data;
   }
 };
