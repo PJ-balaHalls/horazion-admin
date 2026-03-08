@@ -1,35 +1,52 @@
 'use client';
 
-import { Sidebar } from '@/components/layout/Sidebar';
+import React, { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+// Correção: Usando Named Imports em vez de Default Imports
 import { Header } from '@/components/layout/Header';
+import { Sidebar } from '@/components/layout/Sidebar';
 import { useAuthGuard } from '@/hooks/useAuthGuard';
 
-// [FE-HZ-007] Dashboard Layout - Estética Clean White
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { isCheckingAuth } = useAuthGuard();
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { isChecking, isAuthenticated, user } = useAuthGuard();
+  const router = useRouter();
 
-  if (isCheckingAuth) {
+  useEffect(() => {
+    // Redireciona para login se não estiver autenticado após a checagem
+    if (!isChecking && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isChecking, isAuthenticated, router]);
+
+  // Skeleton de proteção enquanto valida a sessão (Prevenção de Flicker)
+  if (isChecking || !isAuthenticated) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-horazion-white">
-        <div className="flex flex-col items-center gap-4 animate-fade-in">
-          <div className="w-10 h-10 bg-horazion-black rounded-hz animate-pulse flex items-center justify-center shadow-sm">
-             <span className="text-horazion-white font-bold text-lg">H</span>
-          </div>
-          <span className="text-xs text-horazion-gray font-bold tracking-widest uppercase">Validando Identidade...</span>
+      <div className="flex items-center justify-center min-h-screen bg-white">
+        <div className="animate-pulse flex flex-col items-center">
+          <div className="w-12 h-12 border-4 border-[#F2F2F2] border-t-[#B6192E] rounded-full animate-spin"></div>
+          <p className="mt-4 text-sm text-[#545454]">Validando credenciais de acesso...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-horazion-white font-sans overflow-hidden">
-      <Sidebar />
-      <main className="flex-1 flex flex-col bg-horazion-white overflow-hidden relative">
-        <Header />
-        <div className="p-8 flex-1 overflow-y-auto">
+    <div className="flex h-screen bg-white overflow-hidden">
+      {/* Passamos o userRole para a Sidebar para ela renderizar os menus permitidos */}
+      <Sidebar userRole={user?.star_role} />
+      
+      <div className="flex-1 flex flex-col h-full border-l border-[#F2F2F2]">
+        {/* Passamos o user para o Header para exibir Avatar e HorizionID */}
+        <Header user={user} />
+        
+        <main className="flex-1 overflow-y-auto bg-[#FAFAFA] p-6">
           {children}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
-}
+} 

@@ -4,7 +4,12 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Faltam variáveis de ambiente do Supabase (URL ou Anon Key) no arquivo .env.local');
+  throw new Error('HZ-SYS_001: Variáveis de ambiente do Supabase não encontradas.');
+}
+
+// Log arquitetural de validação (aparecerá no console do navegador)
+if (typeof window !== 'undefined') {
+  console.log('[HZ-CORE] Inicializando conexão com:', supabaseUrl);
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

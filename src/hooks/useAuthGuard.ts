@@ -1,39 +1,37 @@
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { useEffect } from 'react';
 import { useAuthStore } from '@/store/useAuthStore';
+import { StarRole } from '@/types/horizion';
 
-export function useAuthGuard() {
-  const router = useRouter();
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-  const { setSession, fetchProfile } = useAuthStore();
+export function useAuthGuard(requiredRoles?: StarRole[]) {
+  const { user, isAuthenticated, isChecking, checkSession } = useAuthStore();
 
   useEffect(() => {
-    const initSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        router.push('/login');
-      } else {
-        setSession(session);
-        await fetchProfile(session.user.id);
-        setIsCheckingAuth(false);
-      }
-    };
+    // Apenas checa se for a primeira vez que o hook monta
+    if (!isAuthenticated && isChecking) {
+      checkSession();
+    }
+  }, [isAuthenticated, isChecking, checkSession]);
 
-    initSession();
+  // Função utilitária para os componentes verificarem se podem renderizar um botão
+  const hasPermission = (allowedRoles: StarRole[]) => {
+    if (!user) return false;
+    return allowedRoles.includes(user.star_role);
+  };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!session) {
-        router.push('/login');
-      } else {
-        setSession(session);
-        await fetchProfile(session.user.id);
-      }
-    });
+  let isAuthorized = true;
 
-    return () => subscription.unsubscribe();
-  }, [router, setSession, fetchProfile]);
+  // Se a rota exigiu roles específicas (ex: ['sirius', 'canopus']) e a checagem acabou
+  if (!isChecking && isAuthenticated && requiredRoles && user) {
+    if (!requiredRoles.includes(user.star_role)) {
+      isAuthorized = false;
+    }
+  }
 
-  return { isCheckingAuth };
+  return {
+    user,
+    isAuthenticated,
+    isChecking,
+    isAuthorized,
+    hasPermission
+  };
 }

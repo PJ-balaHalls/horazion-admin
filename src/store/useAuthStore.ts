@@ -1,68 +1,76 @@
 import { create } from 'zustand';
-import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-
-// Mantida a taxonomia estelar para roles. Excelente prática de ofuscação e branding.
-interface Profile {
-  horizion_id: string;
-  full_name: string;
-  role: 'sirius' | 'rigel' | 'betelgeuse' | 'altair' | 'polaris' | 'user';
-}
+import { HorizionUser, StarRole } from '@/types/horizion';
 
 interface AuthState {
-  session: Session | null;
-  user: User | null;
-  profile: Profile | null;
-  isLoading: boolean;
-  setSession: (session: Session | null) => void;
-  fetchProfile: (userId: string) => Promise<void>;
+  user: HorizionUser | null;
+  isAuthenticated: boolean;
+  isChecking: boolean;
+  setUser: (user: HorizionUser | null) => void;
+  checkSession: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  session: null,
   user: null,
-  profile: null,
-  isLoading: true,
-  
-  setSession: (session) => {
-    set({ session, user: session?.user || null, isLoading: false });
-  },
+  isAuthenticated: false,
+  isChecking: true, // Impede flicker de tela ao carregar
 
-  // [CORE-HZ-003] Intervenção na busca do Core: Zero Trust e Error Library
-  fetchProfile: async (userId) => {
+  setUser: (user) => set({ user, isAuthenticated: !!user }),
+
+  // Esta é a função exata que a sua página de login está exigindo
+  checkSession: async () => {
+    set({ isChecking: true });
+    
     try {
-      const { data, error, status } = await supabase
-        .from('profiles')
-        .select('horizion_id, full_name, role')
-        .eq('id', userId)
-        .single();
-        
-      if (error) {
-        // Padronização rigorosa de erros do ecossistema Horazion
-        const coreError = {
-          error_code: `HZ-AUTH_${status || '001'}`,
-          system_message: error.message || error.details || "Falha silenciosa de RLS ou Rede.",
-          user_message: "Não foi possível carregar a sua identidade digital.",
-          explanation: "A comunicação com a infraestrutura principal foi negada pelo protocolo Zero Trust.",
-          solution: "Verifique as permissões de RLS no banco de dados ou contate o suporte.",
-          severity: "error"
-        };
-        
-        console.error("Erro na busca da identidade no Core:", JSON.stringify(coreError, null, 2));
-        return; // Interrompe o fluxo para não popular o estado global com null indesejado
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        set({ user: null, isAuthenticated: false, isChecking: false });
+        return;
       }
 
-      if (data) {
-        set({ profile: data as Profile });
+      // Zero Trust: A estrela de permissão (role) vem do JWT criptografado, não do banco legível
+      const jwtRole = (session.user.app_metadata?.star_role as StarRole) || 'sun';
+
+      // Busca apenas dados cosméticos na tabela public.profiles
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('horizion_id, full_name, avatar_url, is_active')
+        .eq('id', session.user.id)
+        .single();
+
+      if (profileError && profileError.code !== 'PGRST116') {
+        console.error('[HZ-AUTH-SYSTEM] Erro ao buscar perfil:', profileError);
       }
-    } catch (err: any) {
-      console.error("Exceção fatal na camada de rede:", err.message || err);
+
+      if (profile && profile.is_active) {
+        set({
+          user: {
+            id: session.user.id,
+            email: session.user.email || '',
+            horizion_id: profile.horizion_id,
+            full_name: profile.full_name,
+            star_role: jwtRole, // Fonte da verdade para a Hierarquia Estelar
+            avatar_url: profile.avatar_url,
+            is_active: profile.is_active,
+          },
+          isAuthenticated: true,
+        });
+      } else {
+        // Caso o usuário exista no auth mas não tenha perfil ativo
+        set({ user: null, isAuthenticated: false });
+      }
+    } catch (error) {
+      console.error('[HZ-AUTH-SYSTEM] Falha crítica ao validar sessão:', error);
+      set({ user: null, isAuthenticated: false });
+    } finally {
+      set({ isChecking: false });
     }
   },
 
   signOut: async () => {
     await supabase.auth.signOut();
-    set({ session: null, user: null, profile: null });
-  }
+    set({ user: null, isAuthenticated: false, isChecking: false });
+  },
 }));
