@@ -1,36 +1,41 @@
+// src/services/userService.ts
 import { supabase } from '@/lib/supabase';
-import { Profile, StellarRole } from '@/types/horizion';
+import { Profile } from '@/types/horizion';
 
 export const userService = {
-  /**
-   * Gera um HorizionID único baseado no nome
-   */
-  generateID(name: string): string {
-    const slug = name.split(' ')[0].toUpperCase();
-    const random = Math.floor(1000 + Math.random() * 9000);
-    return `HZ-${slug}-${random}`;
-  },
-
-  /**
-   * Busca endereço via API externa
-   */
-  async fetchAddress(zip: string) {
-    const res = await fetch(`https://viacep.com.br/ws/${zip}/json/`);
-    return res.json();
-  },
-
-  async getAllProfiles(): Promise<Profile[]> {
+  async getAllProfiles() {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .order('role', { ascending: true });
+      .order('created_at', { ascending: false });
+    
     if (error) throw error;
     return data as Profile[];
   },
 
-  async createProfile(profile: any) {
-    const { data, error } = await supabase.from('profiles').insert([profile]).select().single();
-    if (error) throw error;
+  async createProfile(profileData: Partial<Profile>) {
+    // Nota: Em produção, o 'id' deve vir da criação do usuário em auth.users.
+    // Para este provisionamento, enviamos os dados para a tabela profiles.
+    const { data, error } = await supabase
+      .from('profiles')
+      .insert([profileData])
+      .select();
+
+    if (error) {
+      console.error("Erro detalhado Core:", error);
+      throw error;
+    }
     return data;
+  },
+
+  async getGrowthStats() {
+    const { data, error } = await supabase.from('profiles').select('created_at');
+    if (error || !data) return [{ name: 'Jan', count: 0 }];
+    
+    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun'];
+    return months.map((m, i) => ({
+      name: m,
+      count: data.filter(d => new Date(d.created_at).getMonth() <= i).length
+    }));
   }
 };

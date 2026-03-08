@@ -1,95 +1,99 @@
+// src/components/users/CreateUserModal.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { userService } from '@/services/userService';
-import { StellarRole } from '@/types/horizion';
+import { StellarRole, SYSTEM_PERMISSIONS, Profile } from '@/types/horizion';
+import { generateHorizionID } from '@/utils/horizionIdGenerator';
 
-export function CreateUserModal({ isOpen, onClose, onRefresh }: any) {
+interface Props { isOpen: boolean; onClose: () => void; onSuccess: () => void; }
+
+export function CreateUserModal({ isOpen, onClose, onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({
-    id: '', full_name: '', horizion_id: '', role: 'user' as StellarRole,
-    zip_code: '', location_city: '', location_country: 'Brasil'
+  const [hId, setHId] = useState('');
+  const [form, setForm] = useState<Partial<Profile>>({
+    full_name: '', role: 'user' as StellarRole, status: 'active',
+    custom_permissions: [], location_city: '', location_country: ''
   });
 
-  const handleZip = async (zip: string) => {
-    setForm({ ...form, zip_code: zip });
-    if (zip.length === 8) {
-      const data = await userService.fetchAddress(zip);
-      if (!data.erro) setForm(prev => ({ ...prev, location_city: data.localidade }));
-    }
-  };
-
-  const handleNameChange = (name: string) => {
-    setForm({ ...form, full_name: name, horizion_id: userService.generateID(name) });
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      await userService.createProfile(form);
-      onRefresh();
-      onClose();
-    } catch (err: any) {
-      alert(`Erro Core: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => { if (isOpen) setHId(generateHorizionID()); }, [isOpen]);
 
   if (!isOpen) return null;
 
+  const handleCreate = async () => {
+    setLoading(true);
+    try {
+      await userService.createProfile({
+        ...form,
+        horizion_id: hId,
+        id: crypto.randomUUID() // Provisionamento de ID (UUID v4)
+      });
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      alert(`Falha no Core: ${err.message || 'Erro de permissão RLS'}`);
+    } finally { setLoading(false); }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-horazion-black/20 backdrop-blur-sm p-4">
-      <div className="bg-horazion-white w-full max-w-2xl rounded-hz border border-horazion-light shadow-2xl p-10 animate-slide-in">
-        <h2 className="text-2xl font-bold tracking-tighter mb-8 text-horazion-black">Nova Identidade Estelar</h2>
-        
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[9px] font-bold text-horazion-gray uppercase block mb-1.5">Nome Completo</label>
-              <input required onChange={e => handleNameChange(e.target.value)} className="w-full p-3 border border-horazion-light rounded-hz text-sm font-bold focus:border-horazion-black outline-none" placeholder="Ex: Arthur Sirius" />
-            </div>
-            <div>
-              <label className="text-[9px] font-bold text-horazion-gray uppercase block mb-1.5">HorizionID (Auto)</label>
-              <input readOnly value={form.horizion_id} className="w-full p-3 border border-horazion-light rounded-hz text-sm font-mono bg-horazion-light/20 text-horazion-red" />
-            </div>
-          </div>
+    <div className="fixed inset-0 z-[100] bg-white/80 backdrop-blur-md flex justify-end animate-fade-in">
+      <div className="w-full max-w-xl bg-white h-full border-l border-horazion-light p-12 flex flex-col justify-between overflow-y-auto">
+        <div className="space-y-12">
+          <header>
+            <span className="text-[10px] font-bold text-horazion-red uppercase tracking-[0.4em]">Protocolo Sincronia</span>
+            <h2 className="text-4xl font-bold tracking-tighter text-horazion-black">Nova Identidade</h2>
+          </header>
 
-          <div className="grid grid-cols-3 gap-4">
-             <div>
-              <label className="text-[9px] font-bold text-horazion-gray uppercase block mb-1.5">CEP</label>
-              <input required maxLength={8} onChange={e => handleZip(e.target.value)} className="w-full p-3 border border-horazion-light rounded-hz text-sm font-bold" placeholder="00000000" />
+          <section className="space-y-8">
+            <div className="p-8 bg-horazion-light/10 rounded-[24px] border border-horazion-light text-center">
+              <span className="text-[10px] font-bold text-horazion-gray uppercase tracking-widest block mb-1">HorizionID Gerado</span>
+              <span className="text-2xl font-mono font-bold text-horazion-black tracking-tighter">{hId}</span>
             </div>
-            <div className="col-span-2">
-              <label className="text-[9px] font-bold text-horazion-gray uppercase block mb-1.5">Cidade</label>
-              <input required value={form.location_city} onChange={e => setForm({...form, location_city: e.target.value})} className="w-full p-3 border border-horazion-light rounded-hz text-sm font-bold" />
+
+            <div className="space-y-6">
+              <div className="group">
+                <label className="text-[10px] font-bold text-horazion-gray uppercase tracking-widest">Nome Completo</label>
+                <input 
+                  className="w-full py-4 text-xl font-bold border-b border-horazion-light focus:border-horazion-black outline-none transition-all" 
+                  placeholder="Ex: Sirius Black"
+                  onChange={e => setForm({...form, full_name: e.target.value})}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="text-[10px] font-bold text-horazion-gray uppercase tracking-widest">Nível Estelar</label>
+                  <select 
+                    className="w-full py-4 border-b border-horazion-light bg-transparent font-bold text-sm outline-none"
+                    onChange={e => setForm({...form, role: e.target.value as StellarRole})}
+                  >
+                    <option value="user">USER</option>
+                    <option value="sirius">SIRIUS</option>
+                    <option value="rigel">RIGEL</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-horazion-gray uppercase tracking-widest">Cidade</label>
+                  <input 
+                    className="w-full py-4 border-b border-horazion-light bg-transparent font-bold text-sm outline-none"
+                    placeholder="São Paulo"
+                    onChange={e => setForm({...form, location_city: e.target.value})}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
+          </section>
+        </div>
 
-          <div>
-            <label className="text-[9px] font-bold text-horazion-gray uppercase block mb-1.5">Nível Estelar</label>
-            <select value={form.role} onChange={e => setForm({...form, role: e.target.value as StellarRole})} className="w-full p-3 border border-horazion-light rounded-hz text-sm font-bold bg-horazion-white">
-              <option value="user">SOL (Usuário)</option>
-              <option value="altair">ALTAIR (Analista)</option>
-              <option value="betelgeuse">BETELGEUSE (Operador)</option>
-              <option value="rigel">RIGEL (Estrategista)</option>
-              <option value="sirius">SIRIUS (Diretor)</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[9px] font-bold text-horazion-gray uppercase block mb-1.5">UUID Auth (Supabase)</label>
-            <input required value={form.id} onChange={e => setForm({...form, id: e.target.value})} className="w-full p-3 border border-horazion-light rounded-hz text-xs font-mono" placeholder="00000000-0000..." />
-          </div>
-
-          <div className="flex gap-4 pt-6">
-            <button type="button" onClick={onClose} className="flex-1 p-3 text-xs font-bold text-horazion-gray">DESCARTAR</button>
-            <button type="submit" disabled={loading} className="flex-1 p-3 bg-horazion-black text-horazion-white text-xs font-bold rounded-hz shadow-lg hover:bg-horazion-red transition-all">
-              {loading ? 'SINCRONIZANDO...' : 'CONFIRMAR NO CORE'}
-            </button>
-          </div>
-        </form>
+        <footer className="space-y-4 pt-10">
+          <button 
+            onClick={handleCreate} disabled={loading}
+            className="w-full py-6 bg-horazion-black text-white text-[10px] font-bold uppercase tracking-[0.3em] rounded-full hover:bg-horazion-red transition-all"
+          >
+            {loading ? 'Sincronizando...' : 'Confirmar Registro'}
+          </button>
+          <button onClick={onClose} className="w-full text-[10px] font-bold text-horazion-gray uppercase tracking-widest py-2">Cancelar</button>
+        </footer>
       </div>
     </div>
   );
