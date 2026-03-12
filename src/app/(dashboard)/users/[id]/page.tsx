@@ -3,14 +3,16 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+// IMPORTAÇÃO DIRECTA CORRIGIDA (Sem usar index.ts)
 import { HzButton } from '@/components/ui/HzButton';
 import clsx from 'clsx';
 
-// Importação da Arquitetura Modular (Os componentes que você acabou de criar)
+// Importação da Arquitetura Modular
 import { UserOverviewTab } from '@/components/users/details/UserOverviewTab';
 import { UserSettingsTab } from '@/components/users/details/UserSettingsTab';
 import { UserSecurityTab } from '@/components/users/details/UserSecurityTab';
 import { UserDataTab } from '@/components/users/details/UserDataTab';
+import { UserAffiliationsTab } from '@/components/users/details/UserAffiliationsTab';
 
 export default function UserDetailPage() {
   const params = useParams();
@@ -19,7 +21,8 @@ export default function UserDetailPage() {
   const [user, setUser] = useState<any>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'settings' | 'security' | 'raw'>('overview');
+  
+  const [activeTab, setActiveTab] = useState<'overview' | 'settings' | 'security' | 'association' | 'raw'>('overview');
   const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => { 
@@ -29,7 +32,7 @@ export default function UserDetailPage() {
   const fetchUser = async () => {
     setLoading(true);
     
-    // Promessa Dupla (Zero Trust Fetching) - Traz perfil e logs estruturados em simultâneo
+    // Promessa Dupla (Zero Trust Fetching)
     const [userResponse, logsResponse] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).single(),
       supabase.schema('admin').from('audit_logs').select('*').eq('target_id', userId).order('created_at', { ascending: false }).limit(20)
@@ -37,7 +40,6 @@ export default function UserDetailPage() {
 
     if (userResponse.data) {
       const data = userResponse.data;
-      // Normalização de segurança para garantir que a estrutura existe antes de renderizar
       data.custom_data = {
         personal_info: data.custom_data?.personal_info || {},
         permissions: data.custom_data?.permissions || {},
@@ -58,7 +60,6 @@ export default function UserDetailPage() {
     if (!user) return;
     setIsUpdating(true);
     
-    // Preserva o custom_data inteiro, alterando apenas a preferência específica
     const updatedCustomData = { 
       ...user.custom_data, 
       preferences: { ...user.custom_data.preferences, [key]: value } 
@@ -69,7 +70,7 @@ export default function UserDetailPage() {
     if (!error) {
       setUser({ ...user, custom_data: updatedCustomData });
     } else {
-      alert("Falha ao atualizar preferência na Base de Dados Central.");
+      alert("Falha ao actualizar preferência na Base de Dados Central.");
     }
     
     setIsUpdating(false);
@@ -84,7 +85,6 @@ export default function UserDetailPage() {
     
     if (!error) {
       setUser({ ...user, is_active: newStatus });
-      // Auditoria da Ação de Suspensão/Reativação
       await supabase.schema('admin').from('audit_logs').insert({ 
         target_id: user.id, 
         action: newStatus ? 'ACCOUNT_REACTIVATED' : 'ACCOUNT_SUSPENDED', 
@@ -147,17 +147,18 @@ export default function UserDetailPage() {
       </header>
 
       {/* TABS DE NAVEGAÇÃO DA ARQUITETURA */}
-      <div className="flex gap-8 border-b border-[#F2F2F2] mb-10">
+      <div className="flex gap-8 border-b border-[#F2F2F2] mb-10 overflow-x-auto scrollbar-hide">
         {[
           { id: 'overview', label: '01. Identidade & Contexto' },
           { id: 'settings', label: '02. Controlo de Algoritmo' },
           { id: 'security', label: '03. Auditoria Core' },
+          { id: 'association', label: '05. Associação' },
           { id: 'raw', label: '04. Data Explorer (JSON)' }
         ].map(tab => (
           <button 
             key={tab.id} 
             onClick={() => setActiveTab(tab.id as any)} 
-            className={clsx("pb-4 text-[11px] font-bold uppercase tracking-widest transition-all", activeTab === tab.id ? "text-black border-b-2 border-black" : "text-[#A0A0A0] hover:text-black")}
+            className={clsx("pb-4 text-[11px] font-bold uppercase tracking-widest transition-all whitespace-nowrap", activeTab === tab.id ? "text-black border-b-2 border-black" : "text-[#A0A0A0] hover:text-black")}
           >
             {tab.label}
           </button>
@@ -168,6 +169,7 @@ export default function UserDetailPage() {
       {activeTab === 'overview' && <UserOverviewTab user={user} />}
       {activeTab === 'settings' && <UserSettingsTab user={user} updatePreference={updatePreference} />}
       {activeTab === 'security' && <UserSecurityTab auditLogs={auditLogs} />}
+      {activeTab === 'association' && <UserAffiliationsTab userId={user.id} />}
       {activeTab === 'raw' && <UserDataTab user={user} />}
 
     </div>
