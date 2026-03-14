@@ -1,17 +1,17 @@
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { MainContent } from '@/components/layout/MainContent';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    // Fundo Pure White absoluto na raiz. Zero cinza.
-    <div className="flex h-screen bg-white">
+    <div className="flex h-screen bg-white overflow-hidden">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 transition-all duration-300">
         <Header />
-        {/* Main também com bg-white para garantir a continuidade plana */}
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-white">
+        {/* Envolvemos o conteúdo no nosso controlador instantâneo */}
+        <MainContent>
           {children}
-        </main>
+        </MainContent>
       </div>
     </div>
   );
