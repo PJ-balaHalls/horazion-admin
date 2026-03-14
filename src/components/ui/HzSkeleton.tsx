@@ -1,12 +1,13 @@
-// src/components/ui/HzSkeleton.tsx
 import React from 'react';
+import clsx from 'clsx';
 
-export interface HzSkeletonProps {
-  className?: string;
-}
+interface HzSkeletonProps extends React.HTMLAttributes<HTMLDivElement> {}
 
-export function HzSkeleton({ className = '' }: HzSkeletonProps) {
+export function HzSkeleton({ className, ...props }: HzSkeletonProps) {
   return (
-    <div className={`animate-pulse bg-gray-100 rounded-lg ${className}`} />
+    <div 
+      className={clsx("animate-pulse bg-gray-100 rounded-lg", className)} 
+      {...props} 
+    />
   );
 }

@@ -2,14 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #F2F2F2;
-  color: #545454;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* Horizon Clarity: Scrollbar Global Absoluta (Forçada em todos os elementos) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #f3f4f6 transparent;
 }
 
-h1, h2, h3, h4, h5, h6 {
-  color: #000000;
-  font-weight: 600;
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Thumb padrão super suave */
+::-webkit-scrollbar-thumb {
+  background-color: #f3f4f6; /* Tailwind gray-100 */
+  border-radius: 10px;
+  transition: background-color 0.3s ease;
+}
+
+/* Thumb ativo (Hover) vira o Vermelho Horazion */
+::-webkit-scrollbar-thumb:hover {
+  background-color: #E50000 !important;
+}
+
+/* Utilitário para ocultar scrollbar até dar hover (Custom Scrollbar) */
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+.custom-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: #e5e7eb; /* Tailwind gray-200 */
+}
+.custom-scrollbar:hover::-webkit-scrollbar-thumb:hover {
+  background-color: #E50000 !important;
+}
+
+/* Ocultar barra padrão onde necessário, mas manter funcionalidade */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

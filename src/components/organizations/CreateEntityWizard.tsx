@@ -1,32 +1,23 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { HzButton } from '@/components/ui';
-import { 
-  BuildingOfficeIcon, UserIcon, QrCodeIcon, ShieldCheckIcon, 
-  ChevronLeftIcon, ChevronRightIcon, SwatchIcon, PresentationChartLineIcon,
-  RectangleGroupIcon, GiftIcon, UsersIcon, CheckBadgeIcon, DocumentCheckIcon
-} from '@heroicons/react/24/outline';
 import { B2B_BENEFITS_DICTIONARY, BenefitsEngineConfig } from '@/types/b2b-organization';
+import { ChevronRightIcon, ChevronLeftIcon } from '@heroicons/react/24/outline';
 
-// Importação das Sub-Abas (Criaremos a seguir)
-import { PersonalizationTab } from './wizard/PersonalizationTab';
-import { StrategyTab } from './wizard/StrategyTab';
-import { OrgChartTab } from './wizard/OrgChartTab';
-import { BenefitsTab } from './wizard/BenefitsTab';
-import { OnboardingTab } from './wizard/OnboardingTab';
-import { VerificationTab } from './wizard/VerificationTab';
-import { ReviewTab } from './wizard/ReviewTab';
+import { PersonalizationTab } from '@/components/organizations/wizard/PersonalizationTab';
+import { StrategyTab } from '@/components/organizations/wizard/StrategyTab';
+import { OrgChartTab } from '@/components/organizations/wizard/OrgChartTab';
+import { BenefitsTab } from '@/components/organizations/wizard/BenefitsTab';
+import { OnboardingTab } from '@/components/organizations/wizard/OnboardingTab';
+import { VerificationTab } from '@/components/organizations/wizard/VerificationTab';
+import { ReviewTab } from '@/components/organizations/wizard/ReviewTab';
 
 type TabId = 'personalization' | 'strategic' | 'org_chart' | 'benefits' | 'mass_onboarding' | 'verification' | 'review';
-type PreviewMode = 'profile' | 'badge';
-
 export interface OrgDepartment { id: string; name: string; members: any[]; sub_departments: OrgDepartment[]; }
 
 export function CreateEntityWizard({ onClose, onSave }: { onClose: () => void, onSave: (d: any) => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<TabId>('personalization');
-  const [previewMode, setPreviewMode] = useState<PreviewMode>('profile');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
 
   const [localFiles, setLocalFiles] = useState<{ logo: File | null; cover: File | null }>({ logo: null, cover: null });
@@ -38,140 +29,121 @@ export function CreateEntityWizard({ onClose, onSave }: { onClose: () => void, o
     slug: '',
     branding: { primary_color: '#E50000' },
     strategic_data: { sector: '', business_objectives: [] as string[], monitoring_kpis: [] as string[] },
-    org_chart: { departments: [{ id: 'gov-1', name: 'Governança', members: [], sub_departments: [] }] as OrgDepartment[] },
-    benefits_engine: {
-      mode: 'bundle' as 'bundle' | 'custom',
-      active_bundles: [] as string[],
-      custom_features: [] as string[],
-      final_features: {} as BenefitsEngineConfig,
-      total_price: 0
-    },
+    org_chart: { departments: [{ id: 'gov-1', name: 'Governança Corporativa', members: [], sub_departments: [] }] as OrgDepartment[] },
+    benefits_engine: { mode: 'custom' as 'bundle' | 'custom', active_bundles: [] as string[], custom_features: [] as string[], final_features: {} as BenefitsEngineConfig, total_price: 0, isCombo: false },
     mass_onboarding_list: [] as any[],
-    verification: { has_documents: false, document_type: '', registration_number: '' }
+    verification: { has_documents: false, registration_number: '' }
   });
 
   const TABS = [
-    { id: 'personalization', label: 'Identidade Visual', icon: SwatchIcon },
-    { id: 'strategic', label: 'Estratégia & KPIs', icon: PresentationChartLineIcon },
-    { id: 'org_chart', label: 'Organograma', icon: RectangleGroupIcon },
-    { id: 'benefits', label: 'Benefícios B2B', icon: GiftIcon },
-    { id: 'mass_onboarding', label: 'Onboarding', icon: UsersIcon },
-    { id: 'verification', label: 'Selo de Verificado', icon: CheckBadgeIcon },
-    { id: 'review', label: 'Resumo & Instanciar', icon: DocumentCheckIcon }
+    { id: 'personalization', label: '1. Identidade Visual' },
+    { id: 'strategic', label: '2. Estratégia B2B' },
+    { id: 'org_chart', label: '3. Organograma' },
+    { id: 'benefits', label: '4. Motor Comercial' },
+    { id: 'mass_onboarding', label: '5. Onboarding' },
+    { id: 'verification', label: '6. Validação (KYB)' },
+    { id: 'review', label: '7. Consolidar' }
   ];
 
-  return (
-    <div className="flex bg-white rounded-3xl border border-gray-100 shadow-xl h-full overflow-hidden animate-in fade-in zoom-in-95 duration-300">
-      
-      {/* Sidebar Colapsável (Clean White) */}
-      <aside className={`flex-none bg-white border-r border-gray-100 flex flex-col transition-all duration-300 relative ${isSidebarOpen ? 'w-64' : 'w-20'}`}>
-        <button 
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
-          className="absolute -right-3 top-8 bg-white border border-gray-200 rounded-full p-1 shadow-sm hover:text-[#E50000] z-10"
-        >
-          {isSidebarOpen ? <ChevronLeftIcon className="w-4 h-4"/> : <ChevronRightIcon className="w-4 h-4"/>}
-        </button>
+  const currentTabIndex = TABS.findIndex(t => t.id === activeTab);
 
-        <div className="p-6 border-b border-gray-50 flex items-center justify-center">
-          {isSidebarOpen ? (
-            <div className="w-full">
-              <h2 className="text-lg font-black text-black tracking-tight">Nova Entidade</h2>
-              <p className="text-[10px] text-gray-400 font-mono mt-1">{formData.horizon_id}</p>
+  const handleNext = () => { if (currentTabIndex < TABS.length - 1) setActiveTab(TABS[currentTabIndex + 1].id as TabId); };
+  const handlePrev = () => { if (currentTabIndex > 0) setActiveTab(TABS[currentTabIndex - 1].id as TabId); };
+
+  const handleSaveWrapper = async () => {
+    setLoading(true);
+    try { await onSave({ ...formData, local_files: localFiles }); } 
+    catch (error) { console.error(error); } 
+    finally { setLoading(false); }
+  };
+
+  return (
+    // ZERO BORDAS (Sem rounded, sem border, sem shadow). Ele FUDE-SE ao layout pai nativamente.
+    <div className="flex flex-col w-full h-full bg-white animate-in fade-in duration-300">
+      
+      {/* Top Header & Tabs (Ocupa 100% da largura, dividindo espaço com a sidebar global) */}
+      <header className="flex-none px-12 pt-10 border-b border-gray-100 bg-white">
+        <div className="flex justify-between items-start mb-10 max-w-7xl mx-auto">
+          <div>
+            <h1 className="text-4xl font-black text-black tracking-tight">Provisionar Nova Entidade</h1>
+            <div className="flex items-center gap-3 mt-3">
+              <span className="text-xs font-black text-gray-400 uppercase tracking-widest border border-gray-200 px-4 py-1.5 rounded-full">
+                ID: {formData.horizon_id}
+              </span>
+              <span className="text-xs font-black text-[#E50000] uppercase tracking-widest bg-red-50 px-4 py-1.5 rounded-full">
+                Etapa {currentTabIndex + 1} de {TABS.length}
+              </span>
             </div>
-          ) : (
-            <BuildingOfficeIcon className="w-8 h-8 text-[#E50000]"/>
-          )}
+          </div>
+          <HzButton 
+            variant="ghost" 
+            onClick={onClose} 
+            className="text-gray-400 font-bold hover:text-black hover:bg-gray-50 border border-transparent rounded-xl px-6 py-3 transition-all"
+          >
+            Cancelar Operação
+          </HzButton>
         </div>
-        
-        <nav className="p-4 flex flex-col gap-2 overflow-y-auto flex-1 custom-scrollbar">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
+
+        <nav className="flex gap-10 overflow-x-auto custom-scrollbar max-w-7xl mx-auto">
+          {TABS.map((tab, idx) => {
             const isActive = activeTab === tab.id;
+            const isCompleted = idx < currentTabIndex;
+
             return (
               <button
-                key={tab.id} onClick={() => setActiveTab(tab.id as TabId)}
-                className={`flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition-all ${
-                  isActive ? 'bg-red-50 text-[#E50000]' : 'text-gray-500 hover:bg-gray-50 hover:text-black'
-                } ${!isSidebarOpen && 'justify-center px-0'}`}
-                title={!isSidebarOpen ? tab.label : ''}
+                key={tab.id} 
+                onClick={() => setActiveTab(tab.id as TabId)}
+                className={`pb-5 text-sm font-black transition-all border-b-2 whitespace-nowrap px-2 ${
+                  isActive 
+                    ? 'border-[#E50000] text-[#E50000]' 
+                    : isCompleted 
+                      ? 'border-transparent text-black hover:text-[#E50000]'
+                      : 'border-transparent text-gray-300 hover:text-gray-500'
+                }`}
               >
-                <Icon className={`w-5 h-5 flex-none ${isActive ? 'text-[#E50000]' : 'text-gray-400'}`} />
-                {isSidebarOpen && <span>{tab.label}</span>}
+                {tab.label}
               </button>
             );
           })}
         </nav>
-      </aside>
+      </header>
 
-      {/* Dynamic Content Area */}
-      <main className="flex-1 overflow-y-auto p-12 custom-scrollbar bg-white relative">
-        <div className="max-w-4xl mx-auto">
+      {/* Main Form Area */}
+      <main className="flex-1 overflow-y-auto p-12 bg-white custom-scrollbar relative">
+        <div className="max-w-6xl mx-auto pb-12">
           {activeTab === 'personalization' && <PersonalizationTab formData={formData} setFormData={setFormData} setLocalFiles={setLocalFiles} previewUrls={previewUrls} setPreviewUrls={setPreviewUrls} />}
           {activeTab === 'strategic' && <StrategyTab formData={formData} setFormData={setFormData} />}
           {activeTab === 'org_chart' && <OrgChartTab formData={formData} setFormData={setFormData} />}
           {activeTab === 'benefits' && <BenefitsTab formData={formData} setFormData={setFormData} />}
           {activeTab === 'mass_onboarding' && <OnboardingTab formData={formData} setFormData={setFormData} />}
           {activeTab === 'verification' && <VerificationTab formData={formData} setFormData={setFormData} />}
-          {activeTab === 'review' && <ReviewTab formData={formData} previewUrls={previewUrls} onSave={() => onSave(formData)} onClose={onClose} loading={loading} />}
+          {activeTab === 'review' && <ReviewTab formData={formData} previewUrls={previewUrls} onSave={handleSaveWrapper} onClose={onClose} loading={loading} />}
         </div>
       </main>
 
-      {/* Dual Preview (Refined Corporate Badge) */}
-      <aside className="w-[360px] flex-none bg-white border-l border-gray-100 p-8 flex flex-col items-center shadow-sm overflow-y-auto">
-        <div className="flex w-full bg-gray-50 rounded-xl p-1 mb-8 border border-gray-100">
-          <button onClick={() => setPreviewMode('profile')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${previewMode === 'profile' ? 'bg-white text-black shadow-sm border border-gray-200' : 'text-gray-400 hover:text-black'}`}>Perfil Social</button>
-          <button onClick={() => setPreviewMode('badge')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${previewMode === 'badge' ? 'bg-white text-black shadow-sm border border-gray-200' : 'text-gray-400 hover:text-black'}`}>Corporate Badge</button>
+      {/* Footer Fixo */}
+      <footer className="flex-none px-12 py-6 border-t border-gray-100 bg-white flex justify-between items-center z-10">
+        <div className="max-w-7xl mx-auto w-full flex justify-between">
+          <HzButton 
+            variant="ghost" 
+            onClick={handlePrev} 
+            disabled={currentTabIndex === 0} 
+            className="text-gray-400 font-black hover:text-black hover:bg-gray-50 border border-transparent disabled:opacity-30 disabled:hover:bg-transparent flex gap-2 items-center px-8 py-4 rounded-xl transition-all"
+          >
+            <ChevronLeftIcon className="w-5 h-5 font-black"/> Voltar
+          </HzButton>
+
+          {currentTabIndex < TABS.length - 1 ? (
+            <HzButton onClick={handleNext} className="bg-black hover:bg-[#E50000] text-white font-black flex gap-2 items-center px-10 py-4 rounded-xl shadow-md transition-colors">
+              Avançar <ChevronRightIcon className="w-5 h-5 font-black"/>
+            </HzButton>
+          ) : (
+            <HzButton onClick={handleSaveWrapper} disabled={loading} className="bg-[#E50000] hover:bg-red-700 text-white font-black px-12 py-4 rounded-xl shadow-lg transition-colors disabled:opacity-50">
+              {loading ? 'Processando...' : 'Concluir e Instanciar Entidade'}
+            </HzButton>
+          )}
         </div>
-        
-        {previewMode === 'profile' && (
-          <div className="w-full bg-white rounded-3xl border border-gray-100 shadow-xl overflow-hidden group hover:border-[#E50000] transition-colors">
-            <div className="h-32 w-full relative" style={{ backgroundColor: previewUrls.cover ? 'transparent' : formData.branding.primary_color }}>
-              {previewUrls.cover && <img src={previewUrls.cover} className="w-full h-full object-cover" />}
-            </div>
-            <div className="px-6 pb-8 pt-0 relative flex flex-col items-center text-center">
-              <div className="w-20 h-20 rounded-2xl bg-white shadow-xl border-4 border-white absolute -top-10 flex items-center justify-center overflow-hidden z-10">
-                {previewUrls.logo ? <img src={previewUrls.logo} className="w-full h-full object-cover" /> : <BuildingOfficeIcon className="w-8 h-8 text-gray-200" />}
-              </div>
-              <div className="mt-14 w-full">
-                <h3 className="text-lg font-black text-black leading-tight truncate flex items-center justify-center gap-1">
-                  {formData.displayName || 'Entidade Base'}
-                  {formData.verification.has_documents && <ShieldCheckIcon className="w-5 h-5 text-blue-500"/>}
-                </h3>
-                <p className="text-xs font-mono text-gray-500 mt-1">www.horaziongroup.com/org/{formData.slug || 'slug'}</p>
-                <div className="mt-4"><span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest border border-gray-200 px-3 py-1 rounded-full">{formData.strategic_data.sector || 'SETOR'}</span></div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {previewMode === 'badge' && (
-          <div className="w-full bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden transform transition-all aspect-[2/3] flex flex-col relative">
-            {/* Lanyard Hole */}
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 w-16 h-3 bg-white rounded-full border border-gray-200 shadow-inner z-20"></div>
-            
-            {/* Elegant Header with SVG Noise for texture */}
-            <div className="h-32 w-full relative flex items-end justify-center pb-4" style={{ backgroundColor: formData.branding.primary_color }}>
-               <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white to-transparent"></div>
-               {previewUrls.logo ? <img src={previewUrls.logo} className="w-14 h-14 rounded-xl bg-white p-1.5 shadow-xl z-10 border border-white/50" /> : <BuildingOfficeIcon className="w-10 h-10 text-white/50 z-10"/>}
-            </div>
-
-            <div className="flex-1 flex flex-col items-center px-6 pt-10 pb-8 text-center bg-white">
-               <div className="w-24 h-24 bg-gray-50 rounded-full border border-gray-100 shadow-inner flex items-center justify-center mb-6">
-                  <UserIcon className="w-10 h-10 text-gray-300" />
-               </div>
-               <h2 className="text-xl font-black text-black uppercase tracking-tight truncate w-full">{formData.mass_onboarding_list[0]?.nome || 'NOME DO MEMBRO'}</h2>
-               <p className="text-[10px] font-black mt-1 uppercase tracking-[0.2em] truncate w-full" style={{ color: formData.branding.primary_color }}>
-                 {formData.mass_onboarding_list[0]?.role || 'CARGO'}
-               </p>
-
-               <div className="mt-auto w-full pt-6 flex flex-col items-center">
-                 <QrCodeIcon className="w-16 h-16 text-black mb-2 opacity-90" />
-                 <p className="text-[9px] font-mono text-gray-400 bg-gray-50 px-2 py-1 rounded border border-gray-100">{formData.horizon_id}</p>
-               </div>
-            </div>
-          </div>
-        )}
-      </aside>
+      </footer>
     </div>
   );
 }
