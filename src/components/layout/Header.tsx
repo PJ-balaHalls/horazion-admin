@@ -54,7 +54,8 @@ export function Header() {
         <div className="relative group">
            <div className="w-10 h-10 bg-horazion-white border border-horazion-light rounded-full flex items-center justify-center cursor-pointer hover:border-horazion-black transition-colors overflow-hidden">
              <span className="text-horazion-black font-bold text-xs">
-               {profile?.full_name?.charAt(0).toUpperCase() || 'H'}
+               {/* CORREÇÃO AQUI: Validação segura antes de executar toUpperCase */}
+               {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : 'H'}
              </span>
            </div>
         </div>

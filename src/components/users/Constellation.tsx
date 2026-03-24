@@ -24,13 +24,17 @@ const CATALOG: OrbitingStar[] = [
 
 const RED = '#B6192E';
 
-export function Constellation({ currentRole }: { currentRole: StellarRole }) {
+// CORREÇÃO: Tolerância a props (aceita currentRole direto ou de dentro do profile)
+export function Constellation({ currentRole, profile }: { currentRole?: StellarRole, profile?: any }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const dragRef = useRef({ on: false, lx: 0, ly: 0, ry: -0.25, rx: 0.22 });
   const SIZE = 460;
   const CX = SIZE / 2;
   const CY = SIZE / 2;
+
+  // Garante que a role nunca será nula no build
+  const activeRole = currentRole || profile?.role || 'polaris';
 
   useEffect(() => {
     const canvas = canvasRef.current!;
@@ -54,7 +58,7 @@ export function Constellation({ currentRole }: { currentRole: StellarRole }) {
         
         ctx.beginPath();
         ctx.arc(x, y, star.size * 5, 0, Math.PI * 2);
-        ctx.fillStyle = star.id === currentRole ? RED : 'rgba(0,0,0,0.1)';
+        ctx.fillStyle = star.id === activeRole ? RED : 'rgba(0,0,0,0.1)';
         ctx.fill();
         
         ctx.font = "8px 'Courier New'";
@@ -72,13 +76,14 @@ export function Constellation({ currentRole }: { currentRole: StellarRole }) {
 
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [currentRole]);
+  }, [activeRole]);
 
   return (
     <div className="bg-horazion-white border border-horazion-light rounded-hz p-4 flex flex-col items-center">
       <h3 className="text-[10px] font-bold text-horazion-red uppercase tracking-[0.3em] mb-4">Mapa Estelar de Acesso</h3>
       <canvas ref={canvasRef} width={SIZE} height={SIZE} className="w-full max-w-[300px] cursor-move" />
-      <div className="mt-4 text-[9px] font-bold text-horazion-gray uppercase tracking-widest">Sua Posição: {currentRole.toUpperCase()}</div>
+      {/* CORREÇÃO AQUI: String() previne crash caso a variável esteja vazia */}
+      <div className="mt-4 text-[9px] font-bold text-horazion-gray uppercase tracking-widest">Sua Posição: {String(activeRole).toUpperCase()}</div>
     </div>
   );
 }

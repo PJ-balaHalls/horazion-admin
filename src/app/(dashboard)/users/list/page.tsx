@@ -37,9 +37,10 @@ export default function UsersListPage() {
 
   useEffect(() => { fetchUsers(); }, []);
 
+  // CORREÇÃO AQUI: Proteção absoluta contra 'undefined.includes()'
   const filteredUsers = users.filter(u => 
-    u.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    u.horizion_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (u.full_name && u.full_name.toLowerCase().includes(searchTerm.toLowerCase())) || 
+    (u.horizion_id && u.horizion_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (u.email && u.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
