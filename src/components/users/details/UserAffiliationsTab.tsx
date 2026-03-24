@@ -7,28 +7,19 @@ import { BuildingOfficeIcon, TrashIcon, LinkIcon, MagnifyingGlassIcon, FunnelIco
 
 interface UserAffiliationsTabProps { userId: string; }
 
-// Catálogo de Ícones para Benefícios Dinâmicos
+// Catálogo de Ícones para Benefícios
 const BENEFIT_ICONS: Record<string, React.ElementType> = {
   'vip_access': ShieldCheckIcon, 'fee_waiver': GiftIcon, 'priority_support': ClockIcon, 'default': GiftIcon
 };
 
-// Definição de Hierarquias Horazion
 const ROLES_DEFINITION = [
   { id: 'member', label: 'Membro Padrão', desc: 'Permissões de leitura e interação base.' },
   { id: 'finance', label: 'Gestor Financeiro', desc: 'Gestão de faturas, orçamentos e transações.' },
   { id: 'admin', label: 'Administrador Org', desc: 'Controlo total e provisionamento de usuários.' }
 ];
 
-// Descodificador de Erros do Supabase/PostgreSQL
-const parseSupabaseError = (error: any) => {
-  if (error.code === '23502' && error.message.includes('profile_id')) return "FALHA CRÍTICA: ID da Identidade nulo.";
-  if (error.code === '23505') return "Vínculo Duplicado. Esta identidade já está vinculada a este Hub Corporativo.";
-  if (error.code === '42501') return "Segurança: Permissão negada para criar vínculo nesta tabela. Verifique o RLS.";
-  return error.message || "Falha de comunicação desconhecida com o Core.";
-};
-
-// Formatador de Datas Seguro (Evita Crash de Hydration Mismatch e RangeError)
-const safeFormatDate = (dateString: string | null | undefined) => {
+// Formatador de Datas Seguro (Evita quebrar a Netlify)
+const safeFormatDate = (dateString: any) => {
   if (!dateString) return 'Vitalício';
   try {
     const d = new Date(dateString);
@@ -39,7 +30,7 @@ const safeFormatDate = (dateString: string | null | undefined) => {
   }
 };
 
-const isDateExpired = (dateString: string | null | undefined) => {
+const isDateExpired = (dateString: any) => {
   if (!dateString) return false;
   try {
     const d = new Date(dateString);
@@ -52,32 +43,26 @@ const isDateExpired = (dateString: string | null | undefined) => {
 
 export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
   const carouselRef = useRef<HTMLDivElement>(null);
+  
+  // Dados Principais
   const [affiliations, setAffiliations] = useState<any[]>([]);
-  const [availableOrgs, setAvailableOrgs] = useState<{id: string, display_name: string, slug: string, logo_url: string, metadata: any}[]>([]);
+  const [availableOrgs, setAvailableOrgs] = useState<any[]>([]);
   
   // UI States
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentStep, setCurrentStep] = useState(1);
+  const [actionError, setActionError] = useState<{title: string, msg: string} | null>(null);
 
-  // Form States (Wizard)
+  // Form States
   const [isAdding, setIsAdding] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [selectedRole, setSelectedRole] = useState('member');
   const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
   const [expirationDate, setExpirationDate] = useState('');
-  
   const [isSaving, setIsSaving] = useState(false);
-  const [actionError, setActionError] = useState<{title: string, msg: string} | null>(null);
-
-  // Benefícios Reais da Org selecionada (extraídos do JSONB)
-  const currentOrgBenefits = useMemo(() => {
-    if (!selectedEntity) return [];
-    const org = availableOrgs.find(o => o.id === selectedEntity);
-    return org?.metadata?.defined_benefits || [];
-  }, [selectedEntity, availableOrgs]);
 
   const loadData = async () => {
     setIsLoading(true); setActionError(null);
@@ -92,15 +77,17 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
       if (affError) throw affError;
       setAffiliations(affData || []);
 
-      // 2. Busca Organizações (Retirado o filtro "status" inexistente na BD para não falhar a lista)
+      // 2. Busca Organizações
       const { data: orgData, error: orgError } = await supabase
         .from('entities')
-        .select('id, display_name, slug, logo_url, metadata');
+        .select('id, display_name, slug, logo_url, metadata, status');
         
       if (orgError) throw orgError;
       setAvailableOrgs(orgData || []);
+
     } catch (error: any) {
-      setActionError({ title: "Erro de Leitura", msg: error.message || "Verifique as permissões RLS no Supabase." });
+      console.error(error);
+      setActionError({ title: "Falha de Leitura", msg: error.message || "Erro ao conectar ao banco de dados." });
     } finally {
       setIsLoading(false);
     }
@@ -108,19 +95,25 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
 
   useEffect(() => { loadData(); }, [userId]);
 
+  // Benefícios extraídos dinamicamente da Org Selecionada
+  const currentOrgBenefits = useMemo(() => {
+    if (!selectedEntity) return [];
+    const org = availableOrgs.find(o => o.id === selectedEntity);
+    return org?.metadata?.defined_benefits || [];
+  }, [selectedEntity, availableOrgs]);
+
   const toggleBenefit = (benefitId: string) => {
     setSelectedBenefits(prev => prev.includes(benefitId) ? prev.filter(b => b !== benefitId) : [...prev, benefitId]);
   };
 
+  // INJEÇÃO NO BANCO (MÉTODO BLINDADO)
   const handleAddAffiliation = async () => {
-    if (!selectedEntity) return;
-    if (!userId) {
-      setActionError({ title: "Erro de Contexto", msg: "O ID da identidade não foi encontrado." });
-      return;
-    }
+    if (!selectedEntity) return alert("Selecione uma organização.");
+    if (!userId) return setActionError({ title: "Erro de Contexto", msg: "O ID do utilizador não existe nesta página." });
     
     setActionError(null); setIsSaving(true);
 
+    // Payload Limpo e Direto (Sem validadores externos que possam falhar)
     const payload = {
       profile_id: userId,
       entity_id: selectedEntity,
@@ -128,15 +121,19 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
       status: 'active',
       expires_at: expirationDate ? new Date(expirationDate).toISOString() : null,
       association_data: { 
-        job_title: jobTitle.trim() || null, 
+        job_title: jobTitle.trim() || 'Membro', 
         benefits: selectedBenefits 
       }
     };
 
-    const { error } = await supabase.from('affiliations').insert(payload);
+    const { error } = await supabase.from('affiliations').insert([payload]);
 
     if (error) {
-      setActionError({ title: "Falha na Injeção", msg: parseSupabaseError(error) });
+      console.error("ERRO SUPABASE:", error);
+      setActionError({ 
+        title: "Falha ao Injetar Vínculo", 
+        msg: error.message.includes('23505') ? 'Este vínculo já existe.' : error.message 
+      });
     } else {
       setIsAdding(false); setCurrentStep(1); setSelectedEntity(''); setJobTitle(''); setSelectedRole('member'); setSelectedBenefits([]); setExpirationDate('');
       await loadData();
@@ -147,18 +144,15 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
   const handleRevoke = async (id: string, orgName: string) => {
     if(!confirm(`Revogar o acesso definitivo ao Hub ${orgName}?`)) return;
     const { error } = await supabase.from('affiliations').delete().eq('id', id);
-    if (error) setActionError({ title: "Falha na Revogação", msg: parseSupabaseError(error) });
+    if (error) setActionError({ title: "Falha na Revogação", msg: error.message });
     else await loadData();
   };
 
-  // Scroll do Carrossel
   const scrollCarousel = (direction: -1 | 1) => {
-    if (carouselRef.current) {
-      carouselRef.current.scrollBy({ left: 300 * direction, behavior: 'smooth' });
-    }
+    if (carouselRef.current) carouselRef.current.scrollBy({ left: 300 * direction, behavior: 'smooth' });
   };
 
-  // Filtro Local à prova de Crashes (Null Safe)
+  // Filtro Blindado
   const filteredAffiliations = useMemo(() => {
     return affiliations.filter(aff => {
       const term = (searchTerm || '').toLowerCase();
@@ -176,6 +170,7 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
   return (
     <div className="space-y-8 animate-in fade-in pb-10">
       
+      {/* ALERTAS */}
       {actionError && (
         <div className="p-4 border border-[#B6192E] bg-[#B6192E]/5 rounded-[8px] flex justify-between items-start shadow-sm">
           <div className="flex gap-3 items-center">
@@ -186,7 +181,7 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
         </div>
       )}
 
-      {/* Header Brutalista B2B */}
+      {/* HEADER B2B */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-[#F2F2F2] pb-6">
         <div>
           <h3 className="text-3xl font-bold text-black tracking-tighter">Grafo de Identidades B2B</h3>
@@ -199,13 +194,13 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
         )}
       </div>
 
-      {/* WIZARD DE CRIAÇÃO PREMIUM & ULTRA-TECH */}
+      {/* WIZARD PREMIUM (CRIAÇÃO DE VÍNCULO) */}
       {isAdding && (
         <div className="border border-black bg-[#FAFAFA] rounded-[16px] shadow-sm animate-in slide-in-from-top-4 overflow-hidden relative">
           <div className="absolute top-0 left-0 h-full w-1 bg-black"></div>
           
           <div className="p-8 space-y-10">
-            {/* Indicador de Passos Brutalista */}
+            {/* Steps */}
             <div className="flex gap-1.5 border-b border-[#F2F2F2] pb-4">
                {[1,2,3].map(step => (
                  <div key={step} className={`w-8 h-8 flex items-center justify-center text-[10px] font-black uppercase tracking-widest border transition-colors ${currentStep === step ? 'bg-black text-white border-black' : step < currentStep ? 'bg-[#FAFAFA] text-black border-black' : 'bg-[#FAFAFA] text-[#A0A0A0] border-[#F2F2F2]'}`}>
@@ -213,16 +208,16 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                  </div>
                ))}
                <p className="text-[10px] font-black text-black uppercase tracking-widest mt-2 ml-3">
-                  {currentStep === 1 ? 'Seleção do Hub Corporativo' : currentStep === 2 ? 'Definição de Função e Hierarquia' : 'Atribuição de Benefícios Reais'}
+                  {currentStep === 1 ? 'Seleção do Hub' : currentStep === 2 ? 'Definição de Função' : 'Atribuição de Benefícios'}
                </p>
             </div>
 
-            {/* Passo 1: Carrossel Premium de Organizações ("Passport Style") */}
+            {/* Passo 1: Carrossel */}
             {currentStep === 1 && (
               <div className="animate-in fade-in duration-500">
                 <div className="flex justify-between items-end mb-6">
                   <div>
-                    <h4 className="text-sm font-black text-black uppercase tracking-widest">Selecione o Hub Corporativo (Nível 01)</h4>
+                    <h4 className="text-sm font-black text-black uppercase tracking-widest">Selecione o Hub Corporativo</h4>
                     <p className="text-[10px] text-[#A0A0A0] font-medium mt-1 uppercase">Afiliação da Identidade ao Ecossistema da Organização.</p>
                   </div>
                   <div className="flex gap-2">
@@ -233,17 +228,16 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                 
                 <div ref={carouselRef} className="flex overflow-x-auto gap-5 pb-6 snap-x custom-scrollbar pl-2">
                   {availableOrgs.length === 0 ? (
-                     <div className="w-full text-center p-12 text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhuma organização disponível para vincular.</div>
+                     <div className="w-full text-center p-12 text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhuma organização disponível.</div>
                   ) : (
                     availableOrgs.map(org => {
                       const isSelected = selectedEntity === org.id;
                       const primaryColor = org.metadata?.branding?.primary_color || '#000000';
                       return (
                         <div 
-                          key={org.id} 
-                          onClick={() => setSelectedEntity(org.id)}
+                          key={org.id} onClick={() => setSelectedEntity(org.id)}
                           className={`snap-start flex-shrink-0 w-72 p-6 rounded-[12px] border cursor-pointer transition-all duration-300 relative bg-white group flex items-center gap-4 ${isSelected ? 'shadow-lg' : 'border-[#F2F2F2] hover:border-black hover:bg-[#FAFAFA]'}`}
-                          style={{ borderColor: isSelected ? primaryColor : undefined, boxShadow: isSelected ? `0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.05), inset 0 0 0 2px ${primaryColor}` : undefined }}
+                          style={{ borderColor: isSelected ? primaryColor : undefined }}
                         >
                           <div className="absolute top-0 left-0 w-1.5 h-full transition-opacity opacity-0 group-hover:opacity-100" style={{ backgroundColor: primaryColor, opacity: isSelected ? 1 : undefined }}></div>
                           <div className="w-16 h-16 rounded-[8px] border border-[#F2F2F2] bg-[#FAFAFA] flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
@@ -259,11 +253,11 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
               </div>
             )}
 
-            {/* Passo 2: Função Real e Hierarquia (Grid-Cards Ultra-Tech) */}
+            {/* Passo 2: Função e Hierarquia */}
             {currentStep === 2 && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-500">
                 <div>
-                   <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">Hierarquia e Nível de Acesso Horazion</h4>
+                   <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">Hierarquia de Acesso Horazion</h4>
                    <div className="space-y-4">
                      {ROLES_DEFINITION.map(role => (
                        <div key={role.id} onClick={() => setSelectedRole(role.id)} className={`p-5 rounded-[12px] border cursor-pointer transition-all ${selectedRole === role.id ? 'border-black bg-black shadow-md' : 'border-[#F2F2F2] bg-white hover:border-black/30'}`}>
@@ -274,22 +268,22 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                    </div>
                 </div>
                 <div className="space-y-6">
-                    <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">Dados da Identidade no Hub</h4>
-                    <HzInput label="Função Real / Cargo (Ex: Sénior Dev / CEO)" value={jobTitle} onChange={e => setJobTitle(e.target.value)} icon={BriefcaseIcon} />
+                    <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">Dados no Hub</h4>
+                    <HzInput label="Função Real / Cargo (Ex: Sénior Dev)" value={jobTitle} onChange={e => setJobTitle(e.target.value)} icon={BriefcaseIcon} />
                     <HzInput type="date" label="Data de Expiração Automática (Opcional)" value={expirationDate} onChange={e => setExpirationDate(e.target.value)} icon={ClockIcon} />
                 </div>
               </div>
             )}
 
-            {/* Passo 3: Benefícios Reais */}
+            {/* Passo 3: Benefícios */}
             {currentStep === 3 && (
               <div className="animate-in fade-in duration-500">
-                  <h4 className="text-sm font-black text-black uppercase tracking-widest mb-5">Motor de Benefícios Reais (Definidos pela Organização)</h4>
-                  {currentOrgBenefits.length === 0 ? (
-                     <div className="p-10 text-center border border-black/10 rounded-[12px] bg-white text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhum benefício foi configurado nesta organização.</div>
+                  <h4 className="text-sm font-black text-black uppercase tracking-widest mb-5">Atribuição de Benefícios</h4>
+                  {!currentOrgBenefits || currentOrgBenefits.length === 0 ? (
+                     <div className="p-10 text-center border border-[#F2F2F2] rounded-[12px] bg-white text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhum benefício configurado neste Hub corporativo.</div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                      {currentOrgBenefits.map((benefit: {id: string, label: string, desc: string, icon_key?: string}) => {
+                      {currentOrgBenefits.map((benefit: any) => {
                         const isChecked = selectedBenefits.includes(benefit.id);
                         const Icon = BENEFIT_ICONS[benefit.icon_key || ''] || BENEFIT_ICONS['default'];
                         return (
@@ -311,52 +305,57 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
             )}
           </div>
 
+          {/* Navegação do Wizard */}
           <div className="flex justify-between gap-4 p-6 bg-white border-t border-[#F2F2F2]">
             <HzButton variant="ghost" onClick={() => setIsAdding(false)} className="text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest hover:text-black">Cancelar</HzButton>
             <div className="flex gap-3">
                {currentStep > 1 && <HzButton variant="ghost" onClick={() => setCurrentStep(prev => prev - 1)} className="text-[10px] font-bold text-black uppercase tracking-widest hover:text-white hover:bg-black border border-[#F2F2F2] rounded px-5">Voltar</HzButton>}
                {currentStep < 3 && <HzButton onClick={() => setCurrentStep(prev => prev + 1)} disabled={currentStep === 1 && !selectedEntity} className="bg-black text-white text-[10px] font-bold uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">Seguinte</HzButton>}
-               {currentStep === 3 && <HzButton onClick={handleAddAffiliation} disabled={isSaving} className="bg-black text-white text-[10px] font-black uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">{isSaving ? 'A INJETAR IDENTIDADE...' : 'CONFIRMAR AFILIAÇÃO B2B'}</HzButton>}
+               {currentStep === 3 && <HzButton onClick={handleAddAffiliation} disabled={isSaving} className="bg-black text-white text-[10px] font-black uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">{isSaving ? 'A INJETAR...' : 'CONFIRMAR AFILIAÇÃO'}</HzButton>}
             </div>
           </div>
         </div>
       )}
 
-      {/* ÁREA DE LISTAGEM DE VÍNCULOS EXISTENTES */}
+      {/* BUSCA E FILTROS */}
       {!isAdding && affiliations.length > 0 && (
         <div className="flex flex-col sm:flex-row gap-4 bg-white p-4 border border-[#F2F2F2] rounded-[12px] shadow-sm">
           <div className="relative flex-1">
             <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[#A0A0A0]" />
-            <input type="text" placeholder="Buscar no Grafo corporativo..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-11 pr-4 py-3 border border-[#F2F2F2] bg-[#FAFAFA] rounded-[8px] text-xs font-bold text-black focus:outline-none focus:border-black transition-colors" />
+            <input type="text" placeholder="Buscar no Grafo..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-11 pr-4 py-3 border border-[#F2F2F2] bg-[#FAFAFA] rounded-[8px] text-xs font-bold text-black focus:outline-none focus:border-black transition-colors" />
           </div>
           <div className="relative w-full sm:w-56">
             <FunnelIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[#A0A0A0]" />
             <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full pl-11 pr-4 py-3 border border-[#F2F2F2] bg-[#FAFAFA] rounded-[8px] text-[10px] font-bold uppercase tracking-widest text-black focus:outline-none focus:border-black appearance-none cursor-pointer">
-              <option value="all">Todos os Status</option><option value="active">Ativos</option><option value="pending">Pendentes</option>
+              <option value="all">Todos</option><option value="active">Ativos</option><option value="pending">Pendentes</option>
             </select>
           </div>
         </div>
       )}
 
-      {/* GRID DE CARDS PREMIUM (Listagem de vínculos existentes) */}
+      {/* LISTAGEM DE CARDS PREMIUM */}
       {!isAdding && (
         affiliations.length === 0 ? (
           <div className="p-20 text-center border border-[#F2F2F2] border-dashed rounded-[16px] bg-[#FAFAFA] flex flex-col items-center justify-center">
             <BuildingOfficeIcon className="w-16 h-16 text-[#E0E0E0] mb-4" />
             <h4 className="text-sm font-black text-black uppercase tracking-widest">Identidade Independente</h4>
-            <p className="text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest mt-2 max-w-sm">Esta conta não possui afiliação or vínculo com nenhum Hub corporativo Horazion.</p>
+            <p className="text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest mt-2 max-w-sm">Esta conta não possui afiliação corporativa.</p>
           </div>
         ) : filteredAffiliations.length === 0 ? (
-          <div className="p-12 text-center text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest border border-black/5 bg-white rounded-[12px]">Nenhum vínculo corresponde aos critérios de busca.</div>
+          <div className="p-12 text-center text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest border border-black/5 bg-white rounded-[12px]">Nenhum vínculo corresponde aos filtros.</div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {filteredAffiliations.map((aff) => {
-              // Prevenção de Craches em JSONB
-              const safeBenefits = Array.isArray(aff.association_data?.benefits) ? aff.association_data.benefits : [];
+              // BLINDAGEM DE ARRAYS (Para a Netlify não quebrar nunca)
+              const rawBenefits = aff.association_data?.benefits;
+              const safeBenefits = Array.isArray(rawBenefits) ? rawBenefits : [];
               const hasBenefits = safeBenefits.length > 0;
+              
               const isExpired = isDateExpired(aff.expires_at);
               const brandColor = aff.entities?.metadata?.branding?.primary_color || '#000000';
-              const orgBenefitsList = aff.entities?.metadata?.defined_benefits || [];
+              
+              const rawOrgBenefits = aff.entities?.metadata?.defined_benefits;
+              const orgBenefitsList = Array.isArray(rawOrgBenefits) ? rawOrgBenefits : [];
 
               return (
                 <div key={aff.id} className="bg-white border border-[#F2F2F2] rounded-[16px] p-7 flex flex-col justify-between overflow-hidden relative shadow-sm hover:shadow-lg transition-all group">
@@ -378,14 +377,13 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                   </div>
 
                   <div className="py-6 grid grid-cols-2 gap-4 border-b border-[#F2F2F2] pl-2">
-                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Função / Cargo</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.association_data?.job_title || 'N/A'}</span></div>
-                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Nível Hierárquico</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.affiliation_role}</span></div>
-                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1"> Provisionado em</span><span className="text-xs font-black text-black font-mono">{safeFormatDate(aff.created_at)}</span></div>
+                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Função / Cargo</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.association_data?.job_title || 'Membro'}</span></div>
+                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Hierarquia</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.affiliation_role}</span></div>
                     <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Validade Automática</span><span className={`text-xs font-black uppercase tracking-widest ${isExpired ? 'text-[#B6192E]' : 'text-black'}`}>{safeFormatDate(aff.expires_at)}</span></div>
                   </div>
 
                   <div className="pt-6 pb-7 pl-2">
-                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-3.5">Motor de Benefícios Ativos (Atribuídos)</span>
+                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-3.5">Benefícios Ativos</span>
                     {hasBenefits ? (
                       <div className="flex flex-wrap gap-2.5">
                         {safeBenefits.map((bId: string) => {
@@ -404,7 +402,7 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                   </div>
 
                   <div className="flex gap-3 mt-auto pl-2">
-                    <HzButton className="flex-1 bg-white border border-[#F2F2F2] hover:border-black text-black text-[9px] font-black uppercase tracking-widest py-3 rounded-[8px] transition-all">Gerir Permissões</HzButton>
+                    <HzButton className="flex-1 bg-white border border-[#F2F2F2] hover:border-black text-black text-[9px] font-black uppercase tracking-widest py-3 rounded-[8px] transition-all">Gerir</HzButton>
                     <HzButton onClick={() => handleRevoke(aff.id, aff.entities?.display_name)} className="flex items-center justify-center gap-2 px-6 bg-transparent text-[#B6192E] hover:bg-[#B6192E] hover:text-white border border-[#B6192E]/30 hover:border-[#B6192E] text-[10px] font-black uppercase tracking-widest rounded-[8px] transition-all"><TrashIcon className="w-4 h-4" /></HzButton>
                   </div>
                 </div>
