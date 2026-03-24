@@ -7,7 +7,6 @@ import { supabase } from '@/lib/supabase';
 import { HzButton, HzBadge, HzSkeleton } from '@/components/ui';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 
-// Importação de TODOS os seus módulos horizontais (As abas originais não foram descartadas)
 import { UserOverviewTab } from '@/components/users/details/UserOverviewTab';
 import { UserDataTab } from '@/components/users/details/UserDataTab';
 import { UserSecurityTab } from '@/components/users/details/UserSecurityTab';
@@ -22,16 +21,23 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   
   const [userProfile, setUserProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<UserTabId>('overview'); // Estado global das abas
+  const [activeTab, setActiveTab] = useState<UserTabId>('overview');
 
   useEffect(() => {
     const fetchUser = async () => {
       try {
         setLoading(true);
-        const { data } = await supabase.from('profiles').select('*').eq('id', resolvedParams.id).single();
+        // [BD-HZ] Consulta principal de perfil
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', resolvedParams.id)
+          .single();
+          
+        if (error) throw error;
         setUserProfile(data);
       } catch (error) {
-        console.error("Erro ao carregar utilizador:", error);
+        console.error("[CORE-HZ] Falha ao recuperar identidade digital:", error);
       } finally {
         setLoading(false);
       }
@@ -39,32 +45,30 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
     fetchUser();
   }, [resolvedParams.id]);
 
-  // 1ª Camada de Proteção: Skeleton Progressivo
   if (loading) {
     return (
-      <div className="p-10 max-w-7xl mx-auto space-y-6">
-        <HzButton variant="ghost" disabled className="p-2"><ArrowLeftIcon className="w-5 h-5 text-gray-300"/></HzButton>
+      <div className="p-10 max-w-7xl mx-auto space-y-6 animate-in fade-in">
+        <HzButton variant="ghost" disabled className="p-2"><ArrowLeftIcon className="w-5 h-5 text-[#E5E5E5]"/></HzButton>
         <div className="space-y-4">
-          <HzSkeleton className="h-12 w-1/3" />
-          <HzSkeleton className="h-6 w-32" />
+          <HzSkeleton className="h-12 w-1/3 rounded-md" />
+          <HzSkeleton className="h-6 w-32 rounded-md" />
         </div>
-        <HzSkeleton className="h-64 w-full mt-10 rounded-xl" />
+        <HzSkeleton className="h-[400px] w-full mt-10 rounded-[16px]" />
       </div>
     );
   }
 
-  // 2ª Camada de Proteção: Tratamento de Fallback
+  // [FE-HZ] Prevenção Zero Trust: Renderização interrompida se o dado falhar
   if (!userProfile) {
     return (
       <div className="p-10 max-w-7xl mx-auto text-center space-y-4">
-        <h2 className="text-2xl font-bold text-black">Perfil não encontrado</h2>
-        <p className="text-gray-500 text-sm">O Horizion ID solicitado não existe na base de dados.</p>
-        <HzButton onClick={() => router.push('/users/list')} variant="ghost">Voltar à Listagem</HzButton>
+        <h2 className="text-2xl font-bold text-black tracking-tight">Perfil não encontrado</h2>
+        <p className="text-[#545454] text-sm">A Identidade Digital solicitada não existe ou o acesso foi negado (RLS).</p>
+        <HzButton onClick={() => router.push('/users/list')} variant="ghost" className="mt-4">Voltar à Listagem</HzButton>
       </div>
     );
   }
 
-  // Definição das abas (Preservando as originais e adicionando a B2B no final)
   const tabs: { id: UserTabId; label: string }[] = [
     { id: 'overview', label: 'Visão Geral' },
     { id: 'data', label: 'Dados Pessoais' },
@@ -74,7 +78,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   ];
 
   return (
-    <div className="p-10 max-w-7xl mx-auto space-y-8">
+    <div className="p-10 max-w-7xl mx-auto space-y-8 animate-in fade-in">
       {/* HEADER DO PERFIL */}
       <div className="flex items-start gap-4">
         <HzButton variant="ghost" onClick={() => router.push('/users/list')} className="p-2 mt-1">
@@ -85,14 +89,14 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
             {userProfile.full_name || 'Utilizador Sem Nome'}
           </h1>
           <div className="flex items-center gap-2 mt-2">
-            <HzBadge variant="info">{userProfile.role}</HzBadge>
-            <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">ID: {userProfile.id}</span>
+            <HzBadge variant="info">{userProfile.role || 'user'}</HzBadge>
+            <span className="text-[10px] font-mono text-[#A0A0A0] uppercase tracking-widest">ID: {userProfile.id}</span>
           </div>
         </div>
       </div>
       
-      {/* NAVEGAÇÃO DE ABAS (Instântanea - State Driven) */}
-      <div className="border-b border-gray-200">
+      {/* NAVEGAÇÃO DE ABAS */}
+      <div className="border-b border-[#F2F2F2]">
         <nav className="flex space-x-8">
           {tabs.map((tab) => (
             <button
@@ -101,7 +105,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
               className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === tab.id 
                   ? 'border-[#B6192E] text-[#B6192E]' 
-                  : 'border-transparent text-gray-500 hover:text-gray-900'
+                  : 'border-transparent text-[#A0A0A0] hover:text-black'
               }`}
             >
               {tab.label}
@@ -110,13 +114,16 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         </nav>
       </div>
 
-      {/* RENDERIZAÇÃO CONDICIONAL DOS MÓDULOS */}
-      <div className="bg-white rounded-xl border border-gray-200 p-8 min-h-[400px]">
-         {activeTab === 'overview' && <UserOverviewTab userId={resolvedParams.id} />}
-         {activeTab === 'data' && <UserDataTab userId={resolvedParams.id} />}
+      {/* RENDERIZAÇÃO ESTRUTURAL DOS MÓDULOS */}
+      <div className="bg-white rounded-[16px] border border-[#F2F2F2] p-8 min-h-[400px]">
+         {/* Abas que consomem o perfil principal */}
+         {activeTab === 'overview' && <UserOverviewTab user={userProfile} />}
+         {activeTab === 'data' && <UserDataTab user={userProfile} />}
+         {activeTab === 'settings' && <UserSettingsTab user={userProfile} />}
+         {activeTab === 'affiliations' && <UserAffiliationsTab user={userProfile} />}
+         
+         {/* Aba que gere os seus próprios pedidos à base de dados */}
          {activeTab === 'security' && <UserSecurityTab userId={resolvedParams.id} />}
-         {activeTab === 'settings' && <UserSettingsTab userId={resolvedParams.id} />}
-         {activeTab === 'affiliations' && <UserAffiliationsTab userId={resolvedParams.id} />}
       </div>
     </div>
   );

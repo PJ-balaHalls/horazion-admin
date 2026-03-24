@@ -3,15 +3,40 @@
 import React, { useRef } from 'react';
 import { HzButton } from '@/components/ui/HzButton';
 
-export function UserOverviewTab({ user }: { user: any }) {
+interface HorizionUser {
+  id?: string;
+  horizion_id?: string;
+  full_name?: string;
+  email?: string;
+  created_at?: string;
+  city?: string;
+  state?: string;
+  address?: string;
+  cep?: string;
+  custom_data?: any;
+}
+
+export function UserOverviewTab({ user }: { user: HorizionUser | undefined }) {
   const cardRef = useRef<HTMLDivElement>(null);
-  const { personal_info, system_flags } = user.custom_data;
-  const provPassword = system_flags?.provisional_password;
+
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center p-8 text-[#A0A0A0] text-sm font-medium">
+        Informações detalhadas indisponíveis para este utilizador.
+      </div>
+    );
+  }
+
+  // Desestruturação segura e profunda
+  const customData = user.custom_data || {};
+  const personalInfo = customData.personal_info || {};
+  const systemFlags = customData.system_flags || {};
+  const provPassword = systemFlags.provisional_password;
 
   const getCleanTextCredentials = () => {
-    const docId = personal_info?.document_id || 'o seu CPF/Documento';
+    const docId = personalInfo.document_id || 'o seu CPF/Documento';
     const passText = provPassword ? provPassword : '[Senha definitiva já configurada pelo titular]';
-    return `Horizion Life | Credenciais de Acesso Oficial\n\nOlá, ${user.full_name}. A sua identidade digital foi aprovisionada com sucesso.\n\nDetalhes da Conta:\nE-mail: ${user.email}\nHorizion ID: ${user.horizion_id}\nSenha Provisória: ${passText}\n\nInstruções para o Primeiro Acesso:\nAcesso no app ou site em criar conta e completar cadastro informando seu CPF (${docId}) para validação de segurança.\n\nSuporte Técnico: suporte@horazion.com`;
+    return `Horizion Life | Credenciais de Acesso Oficial\n\nOlá, ${user.full_name || 'Utilizador'}. A sua identidade digital foi aprovisionada com sucesso.\n\nDetalhes da Conta:\nE-mail: ${user.email || 'N/A'}\nHorizion ID: ${user.horizion_id || 'N/A'}\nSenha Provisória: ${passText}\n\nInstruções para o Primeiro Acesso:\nAcesso no app ou site em criar conta e completar cadastro informando seu CPF (${docId}) para validação de segurança.\n\nSuporte Técnico: suporte@horazion.com`;
   };
 
   const handleCopyCredentials = () => {
@@ -20,17 +45,20 @@ export function UserOverviewTab({ user }: { user: any }) {
   };
 
   const handleEmailShare = () => {
-    const subject = encodeURIComponent(`Horizion Life | Acesso Oficial - ${user.full_name}`);
+    const subject = encodeURIComponent(`Horizion Life | Acesso Oficial - ${user.full_name || 'Conta'}`);
     const body = encodeURIComponent(getCleanTextCredentials());
-    window.location.href = `mailto:${user.email}?subject=${subject}&body=${body}`;
+    window.location.href = `mailto:${user.email || ''}?subject=${subject}&body=${body}`;
   };
 
   const handleDownloadTxt = () => {
     const element = document.createElement("a");
     const file = new Blob([getCleanTextCredentials()], { type: 'text/plain' });
     element.href = URL.createObjectURL(file);
-    element.download = `Acesso_Horizion_${user.full_name.replace(/\s+/g, '_')}.txt`;
-    document.body.appendChild(element); element.click(); document.body.removeChild(element);
+    const safeName = (user.full_name || 'Utilizador').replace(/\s+/g, '_');
+    element.download = `Acesso_Horizion_${safeName}.txt`;
+    document.body.appendChild(element); 
+    element.click(); 
+    document.body.removeChild(element);
   };
 
   const handlePrintCard = () => {
@@ -38,13 +66,13 @@ export function UserOverviewTab({ user }: { user: any }) {
     if (printWindow) {
       printWindow.document.write(`
         <html>
-          <head><title>Credenciais - ${user.full_name}</title><style>body { font-family: sans-serif; padding: 40px; } .card { border: 1px solid #ccc; padding: 30px; border-radius: 12px; max-width: 600px; } .label { font-size: 10px; color: #666; text-transform: uppercase; font-weight: bold; } .value { font-size: 16px; margin-bottom: 20px; font-weight: bold; } .instructions { background: #f9f9f9; padding: 15px; border-radius: 8px; font-size: 14px; line-height: 1.5; }</style></head>
+          <head><title>Credenciais - ${user.full_name || 'Utilizador'}</title><style>body { font-family: sans-serif; padding: 40px; } .card { border: 1px solid #ccc; padding: 30px; border-radius: 12px; max-width: 600px; } .label { font-size: 10px; color: #666; text-transform: uppercase; font-weight: bold; } .value { font-size: 16px; margin-bottom: 20px; font-weight: bold; } .instructions { background: #f9f9f9; padding: 15px; border-radius: 8px; font-size: 14px; line-height: 1.5; }</style></head>
           <body>
             <div class="card">
               <h2>Horizion Life | Credenciais Oficiais</h2>
-              <div class="label">Titular</div><div class="value">${user.full_name}</div>
-              <div class="label">E-mail</div><div class="value">${user.email}</div>
-              <div class="label">Horizion ID</div><div class="value">${user.horizion_id}</div>
+              <div class="label">Titular</div><div class="value">${user.full_name || '—'}</div>
+              <div class="label">E-mail</div><div class="value">${user.email || '—'}</div>
+              <div class="label">Horizion ID</div><div class="value">${user.horizion_id || '—'}</div>
               <div class="label">Senha Provisória</div><div class="value" style="color: #B6192E;">${provPassword || '[Já configurada]'}</div>
               <div class="instructions"><strong>Instruções:</strong><br/>Acesso no app ou site em criar conta e completar cadastro informando seu CPF para validação de segurança.</div>
             </div>
@@ -66,9 +94,9 @@ export function UserOverviewTab({ user }: { user: any }) {
               <h3 className="text-lg font-bold text-black tracking-tighter">Horizion Life</h3>
             </div>
             <div className="space-y-4">
-              <div><p className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest">Titular</p><p className="text-sm font-bold text-black">{user.full_name}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest">E-mail</p><p className="text-sm font-medium text-black">{user.email}</p></div>
-              <div><p className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest">Horizion ID</p><p className="text-sm font-mono text-black">{user.horizion_id}</p></div>
+              <div><p className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest">Titular</p><p className="text-sm font-bold text-black">{user.full_name || '—'}</p></div>
+              <div><p className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest">E-mail</p><p className="text-sm font-medium text-black">{user.email || '—'}</p></div>
+              <div><p className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest">Horizion ID</p><p className="text-sm font-mono text-black">{user.horizion_id || '—'}</p></div>
               <div>
                 <p className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest">Senha Provisória</p>
                 <div className="inline-flex items-center gap-2 mt-1">
@@ -94,10 +122,10 @@ export function UserOverviewTab({ user }: { user: any }) {
         <div className="space-y-6">
           <h3 className="text-[10px] font-bold uppercase text-[#A0A0A0] tracking-widest border-l-2 border-black pl-3">Metadados Pessoais</h3>
           <div className="bg-white border border-[#F2F2F2] rounded-[16px] overflow-hidden text-sm">
-            <div className="grid grid-cols-3 border-b border-[#F2F2F2] p-4"><span className="text-[#545454] font-medium">CPF / Doc</span><span className="col-span-2 font-mono text-black">{personal_info.document_id || '—'}</span></div>
-            <div className="grid grid-cols-3 border-b border-[#F2F2F2] p-4"><span className="text-[#545454] font-medium">Ocupação</span><span className="col-span-2 font-bold text-black">{personal_info.occupation || '—'} at {personal_info.company || '—'}</span></div>
-            <div className="grid grid-cols-3 border-b border-[#F2F2F2] p-4"><span className="text-[#545454] font-medium">Telefone</span><span className="col-span-2 font-bold text-black">{personal_info.phone || '—'}</span></div>
-            <div className="grid grid-cols-3 p-4"><span className="text-[#545454] font-medium">Data de Registo</span><span className="col-span-2 text-black">{new Date(user.created_at).toLocaleString('pt-BR')}</span></div>
+            <div className="grid grid-cols-3 border-b border-[#F2F2F2] p-4"><span className="text-[#545454] font-medium">CPF / Doc</span><span className="col-span-2 font-mono text-black">{personalInfo.document_id || '—'}</span></div>
+            <div className="grid grid-cols-3 border-b border-[#F2F2F2] p-4"><span className="text-[#545454] font-medium">Ocupação</span><span className="col-span-2 font-bold text-black">{personalInfo.occupation || '—'} {personalInfo.company ? `at ${personalInfo.company}` : ''}</span></div>
+            <div className="grid grid-cols-3 border-b border-[#F2F2F2] p-4"><span className="text-[#545454] font-medium">Telefone</span><span className="col-span-2 font-bold text-black">{personalInfo.phone || '—'}</span></div>
+            <div className="grid grid-cols-3 p-4"><span className="text-[#545454] font-medium">Data de Registo</span><span className="col-span-2 text-black">{user.created_at ? new Date(user.created_at).toLocaleString('pt-PT') : '—'}</span></div>
           </div>
         </div>
         <div className="space-y-6">

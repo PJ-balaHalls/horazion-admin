@@ -1,0 +1,11 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # Força a Netlify a usar a versão 20 do Node, compatível com as dependências do seu projeto
+  NODE_VERSION = "20"
+  NEXT_PRIVATE_STANDALONE = "true"
+
+# A Netlify instala automaticamente o plugin do Next.js (Netlify Next.js Runtime),
+# então não é necessário declará-lo explicitamente nas versões mais recentes.
