@@ -38,7 +38,7 @@ export default function AccountPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-horazion-gray uppercase">HorizionID</label>
-                <input disabled value={profile?.horizion_id} className="w-full p-2.5 border border-horazion-light rounded bg-horazion-light/10 text-xs font-mono" />
+                <input disabled value={profile?.horizion_id || ''} className="w-full p-2.5 border border-horazion-light rounded bg-horazion-light/10 text-xs font-mono" />
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-horazion-gray uppercase">Localização (CEP)</label>
@@ -53,11 +53,18 @@ export default function AccountPage() {
           <section className="pt-6 border-t border-horazion-light">
             <h3 className="text-xs font-bold text-horazion-black tracking-widest uppercase mb-4">Governança (Minhas Permissões)</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {profile?.custom_permissions?.map((p: string) => (
-                <div key={p} className="p-2 border border-horazion-light rounded text-[10px] font-bold text-horazion-gray bg-horazion-light/5">
-                  ✓ {p.toUpperCase()}
-                </div>
-              )) || <p className="text-[10px] text-horazion-gray italic">Permissões baseadas no nível {profile?.role}.</p>}
+              {profile?.custom_permissions && profile.custom_permissions.length > 0 ? (
+                profile.custom_permissions.map((p: string, index: number) => (
+                  <div key={index} className="p-2 border border-horazion-light rounded text-[10px] font-bold text-horazion-gray bg-horazion-light/5">
+                    {/* Validação de segurança antes de aplicar o toUpperCase */}
+                    ✓ {p ? p.toUpperCase() : 'INDEFINIDO'}
+                  </div>
+                ))
+              ) : (
+                <p className="text-[10px] text-horazion-gray italic">
+                  Permissões baseadas no nível {profile?.role || 'padrão'}.
+                </p>
+              )}
             </div>
           </section>
         </div>
