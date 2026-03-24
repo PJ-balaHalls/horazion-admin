@@ -33,21 +33,44 @@ export default function UsersListPage() {
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-      if (error) throw error;
-      setUsers(data || []);
-    } catch (error) { console.error(error); } 
-    finally { setIsLoading(false); }
+      // Removido o ".order()" do banco para evitar crash caso a coluna não exista.
+      const { data, error } = await supabase.from('profiles').select('*');
+      
+      if (error) {
+        console.error("Erro do Supabase:", error);
+        alert(`Ocorreu um erro ao buscar os utilizadores: ${error.message}`);
+        return;
+      }
+
+      // Ordenação feita pelo lado do cliente (Client-side) de forma segura
+      const sortedData = (data || []).sort((a, b) => {
+        if (a.created_at && b.created_at) {
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }
+        return 0;
+      });
+
+      setUsers(sortedData);
+    } catch (error) { 
+      console.error(error); 
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   useEffect(() => { fetchUsers(); }, []);
 
-  const filteredUsers = users.filter(u => 
-    (u.full_name && u.full_name.toLowerCase().includes(searchTerm.toLowerCase())) || 
-    (u.username && u.username.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (u.horizion_id && u.horizion_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (u.email && u.email.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  // Lógica de filtro blindada contra valores nulos
+  const filteredUsers = users.filter(u => {
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      (u.full_name && u.full_name.toLowerCase().includes(term)) || 
+      (u.username && u.username.toLowerCase().includes(term)) ||
+      (u.horizion_id && u.horizion_id.toLowerCase().includes(term)) ||
+      (u.email && u.email.toLowerCase().includes(term))
+    );
+  });
 
   const mapMarkers = useMemo(() => {
     return users.map(u => {
@@ -132,7 +155,7 @@ export default function UsersListPage() {
                 <th className="p-4 text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest">Geolocalização</th>
                 <th className="p-4 text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest">Role</th>
                 <th className="p-4 text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest">Status</th>
-                <th className="p-4 text-right"></th>
+                <th className="p-4 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F2F2F2]">
@@ -149,7 +172,9 @@ export default function UsersListPage() {
                 ))
               ) : filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-12 text-center text-xs font-medium text-[#A0A0A0]">Nenhum registo encontrado.</td>
+                  <td colSpan={6} className="p-12 text-center text-xs font-medium text-[#A0A0A0]">
+                    Nenhum utilizador encontrado.
+                  </td>
                 </tr>
               ) : filteredUsers.map((user) => (
                 <tr key={user.id} className="hover:bg-[#FAFAFA] transition-colors group cursor-pointer" onClick={() => router.push(`/users/${user.id}`)}>
@@ -193,9 +218,13 @@ export default function UsersListPage() {
                   </td>
 
                   <td className="p-4 text-right">
-                    <span className="text-[10px] font-bold text-[#A0A0A0] group-hover:text-black uppercase tracking-widest transition-colors">
-                      Abrir
-                    </span>
+                    {/* BOTÃO GERIR RESTAURADO E COM DESIGN MINIMALISTA */}
+                    <HzButton 
+                      variant="ghost" 
+                      className="text-[#A0A0A0] hover:text-white hover:bg-black border border-[#F2F2F2] hover:border-black text-[10px] font-bold px-4 py-2 rounded uppercase tracking-widest transition-all"
+                    >
+                      Gerir
+                    </HzButton>
                   </td>
                 </tr>
               ))}
