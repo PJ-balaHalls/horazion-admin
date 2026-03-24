@@ -3,7 +3,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { HzButton, HzSkeleton, HzInput, HzSelect } from '@/components/ui';
-import { z } from 'zod';
 import { BuildingOfficeIcon, TrashIcon, LinkIcon, MagnifyingGlassIcon, FunnelIcon, GiftIcon, ShieldCheckIcon, ClockIcon, CheckCircleIcon, ChevronLeftIcon, ChevronRightIcon, BriefcaseIcon } from '@heroicons/react/24/outline';
 
 interface UserAffiliationsTabProps { userId: string; }
@@ -16,37 +15,45 @@ const BENEFIT_ICONS: Record<string, React.ElementType> = {
 // Definição de Hierarquias Horazion
 const ROLES_DEFINITION = [
   { id: 'member', label: 'Membro Padrão', desc: 'Permissões de leitura e interação base.' },
-  { id: 'finance', label: 'Gestor Financeiro', desc: 'Gestão de faturas, orçamentos e transações do Hub.' },
-  { id: 'admin', label: 'Administrador Org', desc: 'Controlo total e provisionamento de usuários no Hub.' }
+  { id: 'finance', label: 'Gestor Financeiro', desc: 'Gestão de faturas, orçamentos e transações.' },
+  { id: 'admin', label: 'Administrador Org', desc: 'Controlo total e provisionamento de usuários.' }
 ];
-
-// Schema de Validação Estrutural (Garante NULL-safety no Banco de Dados)
-const AffiliationPayloadSchema = z.object({
-  profile_id: z.string().uuid(),
-  entity_id: z.string().uuid(),
-  affiliation_role: z.string(),
-  status: z.string(),
-  expires_at: z.string().datetime().nullable(),
-  association_data: z.object({
-    job_title: z.string().nullable(),
-    benefits: z.array(z.string())
-  })
-});
 
 // Descodificador de Erros do Supabase/PostgreSQL
 const parseSupabaseError = (error: any) => {
-  if (error.code === '23502' && error.message.includes('profile_id')) return "FALHA CRÍTICA: ID da Identidade nulo. Verifique a consola.";
+  if (error.code === '23502' && error.message.includes('profile_id')) return "FALHA CRÍTICA: ID da Identidade nulo.";
   if (error.code === '23505') return "Vínculo Duplicado. Esta identidade já está vinculada a este Hub Corporativo.";
   if (error.code === '42501') return "Segurança: Permissão negada para criar vínculo nesta tabela. Verifique o RLS.";
   return error.message || "Falha de comunicação desconhecida com o Core.";
 };
 
+// Formatador de Datas Seguro (Evita Crash de Hydration Mismatch e RangeError)
+const safeFormatDate = (dateString: string | null | undefined) => {
+  if (!dateString) return 'Vitalício';
+  try {
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return 'Data Inválida';
+    return d.toLocaleDateString('pt-PT');
+  } catch {
+    return 'Data Inválida';
+  }
+};
+
+const isDateExpired = (dateString: string | null | undefined) => {
+  if (!dateString) return false;
+  try {
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return false;
+    return d < new Date();
+  } catch {
+    return false;
+  }
+};
+
 export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
-  const router = useRouter();
   const carouselRef = useRef<HTMLDivElement>(null);
   const [affiliations, setAffiliations] = useState<any[]>([]);
   const [availableOrgs, setAvailableOrgs] = useState<{id: string, display_name: string, slug: string, logo_url: string, metadata: any}[]>([]);
-  const [session, setSession] = useState<any>(null);
   
   // UI States
   const [isLoading, setIsLoading] = useState(true);
@@ -65,7 +72,7 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<{title: string, msg: string} | null>(null);
 
-  // Benefícios Reais da Org selecionada (extraídos do JSONB metadata)
+  // Benefícios Reais da Org selecionada (extraídos do JSONB)
   const currentOrgBenefits = useMemo(() => {
     if (!selectedEntity) return [];
     const org = availableOrgs.find(o => o.id === selectedEntity);
@@ -74,23 +81,29 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
 
   const loadData = async () => {
     setIsLoading(true); setActionError(null);
-    const { data: { session: s } } = await supabase.auth.getSession(); setSession(s);
 
-    if (!s) { setActionError({title: "Sessão Inválida", msg: "Acesse a plataforma novamente."}); return; }
+    try {
+      // 1. Busca Afiliações
+      const { data: affData, error: affError } = await supabase
+        .from('affiliations')
+        .select(`id, affiliation_role, status, expires_at, association_data, entities ( id, display_name, slug, logo_url, metadata )`)
+        .eq('profile_id', userId);
+        
+      if (affError) throw affError;
+      setAffiliations(affData || []);
 
-    // 1. Busca Afiliações
-    const { data: affData, error: affError } = await supabase
-      .from('affiliations')
-      .select(`id, affiliation_role, status, expires_at, association_data, entities ( id, display_name, slug, logo_url, metadata )`)
-      .eq('profile_id', userId);
-    if (affError) console.error(affError); if (affData) setAffiliations(affData);
-
-    // 2. Busca Organizações (Real Data)
-    const { data: orgData, error: orgError } = await supabase.from('entities').select('id, display_name, slug, logo_url, metadata').eq('status', 'active');
-    if (orgError) { setActionError({title: "Falha de Leitura", msg: "Organizações não carregadas. Verifique RLS."}); }
-    else { setAvailableOrgs(orgData || []); }
-    
-    setIsLoading(false);
+      // 2. Busca Organizações (Retirado o filtro "status" inexistente na BD para não falhar a lista)
+      const { data: orgData, error: orgError } = await supabase
+        .from('entities')
+        .select('id, display_name, slug, logo_url, metadata');
+        
+      if (orgError) throw orgError;
+      setAvailableOrgs(orgData || []);
+    } catch (error: any) {
+      setActionError({ title: "Erro de Leitura", msg: error.message || "Verifique as permissões RLS no Supabase." });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => { loadData(); }, [userId]);
@@ -99,34 +112,28 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
     setSelectedBenefits(prev => prev.includes(benefitId) ? prev.filter(b => b !== benefitId) : [...prev, benefitId]);
   };
 
-  // Correção do Erro: handleAddAffiliation blindado com Zod
   const handleAddAffiliation = async () => {
-    if (!selectedEntity || !userId || !session) return;
+    if (!selectedEntity) return;
+    if (!userId) {
+      setActionError({ title: "Erro de Contexto", msg: "O ID da identidade não foi encontrado." });
+      return;
+    }
+    
     setActionError(null); setIsSaving(true);
 
-    // Estruturação do Payload Completo (Real Data)
-    const rawPayload = {
-      profile_id: userId, // UUID Válido
+    const payload = {
+      profile_id: userId,
       entity_id: selectedEntity,
       affiliation_role: selectedRole,
       status: 'active',
       expires_at: expirationDate ? new Date(expirationDate).toISOString() : null,
       association_data: { 
-        job_title: jobTitle.trim() || null, // Função Real
+        job_title: jobTitle.trim() || null, 
         benefits: selectedBenefits 
       }
     };
 
-    // Validação Zod no frontend para garantir NULL-safety
-    const validation = AffiliationPayloadSchema.safeParse(rawPayload);
-    if (!validation.success) {
-      console.error("[VALIDATION ERROR]", validation.error.issues);
-      setActionError({title: "Falha na Validação Estrutural", msg: "A estrutura do vínculo está incompleta."});
-      setIsSaving(false); return;
-    }
-
-    // Inserção Supabase (Com payload validado)
-    const { error } = await supabase.from('affiliations').insert(validation.data);
+    const { error } = await supabase.from('affiliations').insert(payload);
 
     if (error) {
       setActionError({ title: "Falha na Injeção", msg: parseSupabaseError(error) });
@@ -144,19 +151,21 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
     else await loadData();
   };
 
-  // Carrossel Premium: Scroll Function
+  // Scroll do Carrossel
   const scrollCarousel = (direction: -1 | 1) => {
     if (carouselRef.current) {
-      const scrollAmount = 300 * direction;
-      carouselRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+      carouselRef.current.scrollBy({ left: 300 * direction, behavior: 'smooth' });
     }
   };
 
-  // Filtro Local
+  // Filtro Local à prova de Crashes (Null Safe)
   const filteredAffiliations = useMemo(() => {
     return affiliations.filter(aff => {
-      const term = searchTerm.toLowerCase();
-      const matchSearch = aff.entities?.display_name?.toLowerCase().includes(term) || aff.entities?.slug?.toLowerCase().includes(term);
+      const term = (searchTerm || '').toLowerCase();
+      const displayName = (aff.entities?.display_name || '').toLowerCase();
+      const slug = (aff.entities?.slug || '').toLowerCase();
+      
+      const matchSearch = displayName.includes(term) || slug.includes(term);
       const matchStatus = statusFilter === 'all' || aff.status === statusFilter;
       return matchSearch && matchStatus;
     });
@@ -168,20 +177,25 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
     <div className="space-y-8 animate-in fade-in pb-10">
       
       {actionError && (
-        <div className="p-4 border border-[#B6192E] bg-[#B6192E]/5 rounded-[8px] flex justify-between items-start animate-in fade-in shadow-sm">
+        <div className="p-4 border border-[#B6192E] bg-[#B6192E]/5 rounded-[8px] flex justify-between items-start shadow-sm">
           <div className="flex gap-3 items-center">
             <CheckCircleIcon className="w-5 h-5 text-[#B6192E]" />
             <div><h4 className="text-xs font-black text-[#B6192E] uppercase tracking-widest">{actionError.title}</h4><p className="text-[11px] font-bold text-[#B6192E]/80 mt-1">{actionError.msg}</p></div>
           </div>
-          <button onClick={() => setActionError(null)} className="text-[#B6192E] text-[10px] font-bold uppercase hover:bg-[#B6192E]/10 px-3 py-1.5 rounded Transition-colors">Fechar</button>
+          <button onClick={() => setActionError(null)} className="text-[#B6192E] text-[10px] font-bold uppercase hover:bg-[#B6192E]/10 px-3 py-1.5 rounded transition-colors">Fechar</button>
         </div>
       )}
 
       {/* Header Brutalista B2B */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-[#F2F2F2] pb-6">
-        <div><h3 className="text-3xl font-bold text-black tracking-tighter">Grafo de Identidades B2B</h3><p className="text-sm font-medium text-[#A0A0A0] uppercase tracking-widest mt-2">Provisionamento de Acessos e Motor de Benefícios.</p></div>
+        <div>
+          <h3 className="text-3xl font-bold text-black tracking-tighter">Grafo de Identidades B2B</h3>
+          <p className="text-sm font-medium text-[#A0A0A0] uppercase tracking-widest mt-2">Provisionamento de Acessos e Motor de Benefícios.</p>
+        </div>
         {!isAdding && (
-          <HzButton onClick={() => setIsAdding(true)} className="bg-black text-white hover:bg-[#B6192E] px-6 py-3 rounded-[8px] text-[10px] font-black uppercase tracking-widest transition-all shadow-sm"><span className="flex items-center gap-2.5"><LinkIcon className="w-4 h-4" /> NOVO VÍNCULO CORPORATIVO</span></HzButton>
+          <HzButton onClick={() => setIsAdding(true)} className="bg-black text-white hover:bg-[#B6192E] px-6 py-3 rounded-[8px] text-[10px] font-black uppercase tracking-widest transition-all shadow-sm">
+            <span className="flex items-center gap-2.5"><LinkIcon className="w-4 h-4" /> NOVO VÍNCULO CORPORATIVO</span>
+          </HzButton>
         )}
       </div>
 
@@ -207,7 +221,10 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
             {currentStep === 1 && (
               <div className="animate-in fade-in duration-500">
                 <div className="flex justify-between items-end mb-6">
-                  <div><h4 className="text-sm font-black text-black uppercase tracking-widest">Selecione o Hub Corporativo (Nível 01)</h4><p className="text-[10px] text-[#A0A0A0] font-medium mt-1 uppercase">Afiliação da Identidade ao Ecossistema da Organização.</p></div>
+                  <div>
+                    <h4 className="text-sm font-black text-black uppercase tracking-widest">Selecione o Hub Corporativo (Nível 01)</h4>
+                    <p className="text-[10px] text-[#A0A0A0] font-medium mt-1 uppercase">Afiliação da Identidade ao Ecossistema da Organização.</p>
+                  </div>
                   <div className="flex gap-2">
                     <button onClick={() => scrollCarousel(-1)} className="p-2 border border-[#F2F2F2] rounded-full text-black hover:bg-white hover:border-black transition-all shadow-sm"><ChevronLeftIcon className="w-4 h-4" /></button>
                     <button onClick={() => scrollCarousel(1)} className="p-2 border border-[#F2F2F2] rounded-full text-black hover:bg-white hover:border-black transition-all shadow-sm"><ChevronRightIcon className="w-4 h-4" /></button>
@@ -216,7 +233,7 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                 
                 <div ref={carouselRef} className="flex overflow-x-auto gap-5 pb-6 snap-x custom-scrollbar pl-2">
                   {availableOrgs.length === 0 ? (
-                     <div className="w-full text-center p-12 text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhuma organização disponível para vincular. Verifique RLS.</div>
+                     <div className="w-full text-center p-12 text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhuma organização disponível para vincular.</div>
                   ) : (
                     availableOrgs.map(org => {
                       const isSelected = selectedEntity === org.id;
@@ -258,18 +275,18 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                 </div>
                 <div className="space-y-6">
                     <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">Dados da Identidade no Hub</h4>
-                    <HzInput label="Função Real / Cargo (Ex: Sénior Dev / CEO) *" value={jobTitle} onChange={e => setJobTitle(e.target.value)} icon={BriefcaseIcon} />
+                    <HzInput label="Função Real / Cargo (Ex: Sénior Dev / CEO)" value={jobTitle} onChange={e => setJobTitle(e.target.value)} icon={BriefcaseIcon} />
                     <HzInput type="date" label="Data de Expiração Automática (Opcional)" value={expirationDate} onChange={e => setExpirationDate(e.target.value)} icon={ClockIcon} />
                 </div>
               </div>
             )}
 
-            {/* Passo 3: Benefícios Reais (Cards Dinâmicos baseados na Org) */}
+            {/* Passo 3: Benefícios Reais */}
             {currentStep === 3 && (
               <div className="animate-in fade-in duration-500">
                   <h4 className="text-sm font-black text-black uppercase tracking-widest mb-5">Motor de Benefícios Reais (Definidos pela Organização)</h4>
                   {currentOrgBenefits.length === 0 ? (
-                     <div className="p-10 text-center border border-black/10 rounded-[12px] bg-white text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhum benefício foi configurado nesta organização (metadata.defined_benefits).</div>
+                     <div className="p-10 text-center border border-black/10 rounded-[12px] bg-white text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhum benefício foi configurado nesta organização.</div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                       {currentOrgBenefits.map((benefit: {id: string, label: string, desc: string, icon_key?: string}) => {
@@ -278,7 +295,7 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                         return (
                           <div 
                             key={benefit.id} onClick={() => toggleBenefit(benefit.id)}
-                            className={`p-5 rounded-[12px] bordercursor-pointer transition-all flex gap-4 ${isChecked ? 'border-black bg-white shadow-sm' : 'border-[#F2F2F2] bg-white hover:border-black/30'}`}
+                            className={`p-5 rounded-[12px] border cursor-pointer transition-all flex gap-4 ${isChecked ? 'border-black bg-white shadow-sm' : 'border-[#F2F2F2] bg-white hover:border-black/30'}`}
                           >
                             <div className={`w-10 h-10 rounded-[8px] flex items-center justify-center shrink-0 ${isChecked ? 'bg-black text-white' : 'bg-[#FAFAFA] text-[#A0A0A0]'}`}><Icon className="w-5 h-5" /></div>
                             <div>
@@ -299,7 +316,7 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
             <div className="flex gap-3">
                {currentStep > 1 && <HzButton variant="ghost" onClick={() => setCurrentStep(prev => prev - 1)} className="text-[10px] font-bold text-black uppercase tracking-widest hover:text-white hover:bg-black border border-[#F2F2F2] rounded px-5">Voltar</HzButton>}
                {currentStep < 3 && <HzButton onClick={() => setCurrentStep(prev => prev + 1)} disabled={currentStep === 1 && !selectedEntity} className="bg-black text-white text-[10px] font-bold uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">Seguinte</HzButton>}
-               {currentStep === 3 && <HzButton onClick={handleAddAffiliation} disabled={isSaving || !jobTitle.trim()} className="bg-black text-white text-[10px] font-black uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">{isSaving ? 'A INJETAR IDENTIDADE...' : 'CONFIRMAR AFILIAÇÃO B2B'}</HzButton>}
+               {currentStep === 3 && <HzButton onClick={handleAddAffiliation} disabled={isSaving} className="bg-black text-white text-[10px] font-black uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">{isSaving ? 'A INJETAR IDENTIDADE...' : 'CONFIRMAR AFILIAÇÃO B2B'}</HzButton>}
             </div>
           </div>
         </div>
@@ -334,16 +351,17 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {filteredAffiliations.map((aff) => {
-              const hasBenefits = aff.association_data?.benefits && aff.association_data.benefits.length > 0;
-              const isExpired = aff.expires_at && new Date(aff.expires_at) < new Date();
+              // Prevenção de Craches em JSONB
+              const safeBenefits = Array.isArray(aff.association_data?.benefits) ? aff.association_data.benefits : [];
+              const hasBenefits = safeBenefits.length > 0;
+              const isExpired = isDateExpired(aff.expires_at);
               const brandColor = aff.entities?.metadata?.branding?.primary_color || '#000000';
-              const benefitsList = aff.entities?.metadata?.defined_benefits || [];
+              const orgBenefitsList = aff.entities?.metadata?.defined_benefits || [];
 
               return (
                 <div key={aff.id} className="bg-white border border-[#F2F2F2] rounded-[16px] p-7 flex flex-col justify-between overflow-hidden relative shadow-sm hover:shadow-lg transition-all group">
                   <div className="absolute top-0 left-0 w-1.5 h-full transition-opacity opacity-0 group-hover:opacity-100" style={{ backgroundColor: brandColor }}></div>
                   
-                  {/* Cabeçalho do Card */}
                   <div className="flex justify-between items-start border-b border-[#F2F2F2] pb-6 pl-2">
                     <div className="flex items-center gap-4">
                       <div className="w-16 h-16 rounded-[12px] border border-[#F2F2F2] bg-[#FAFAFA] flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
@@ -359,35 +377,19 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                     </span>
                   </div>
 
-                  {/* Informações Centrais (Real Data) */}
                   <div className="py-6 grid grid-cols-2 gap-4 border-b border-[#F2F2F2] pl-2">
-                    <div>
-                      <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Função / Cargo</span>
-                      <span className="text-xs font-black text-black uppercase tracking-widest">{aff.association_data?.job_title || 'N/A'}</span>
-                    </div>
-                    <div>
-                      <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Nível Hierárquico</span>
-                      <span className="text-xs font-black text-black uppercase tracking-widest">{aff.affiliation_role}</span>
-                    </div>
-                    <div>
-                      <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1"> Provisionado em</span>
-                      <span className="text-xs font-black text-black font-mono">{new Date(aff.created_at).toLocaleDateString('pt-PT')}</span>
-                    </div>
-                    <div>
-                      <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Validade Automática</span>
-                      <span className={`text-xs font-black uppercase tracking-widest ${isExpired ? 'text-[#B6192E]' : 'text-black'}`}>
-                        {aff.expires_at ? new Date(aff.expires_at).toLocaleDateString('pt-PT') : 'Vitalício'}
-                      </span>
-                    </div>
+                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Função / Cargo</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.association_data?.job_title || 'N/A'}</span></div>
+                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Nível Hierárquico</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.affiliation_role}</span></div>
+                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1"> Provisionado em</span><span className="text-xs font-black text-black font-mono">{safeFormatDate(aff.created_at)}</span></div>
+                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Validade Automática</span><span className={`text-xs font-black uppercase tracking-widest ${isExpired ? 'text-[#B6192E]' : 'text-black'}`}>{safeFormatDate(aff.expires_at)}</span></div>
                   </div>
 
-                  {/* Benefícios Dinâmicos */}
                   <div className="pt-6 pb-7 pl-2">
                     <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-3.5">Motor de Benefícios Ativos (Atribuídos)</span>
                     {hasBenefits ? (
                       <div className="flex flex-wrap gap-2.5">
-                        {aff.association_data.benefits.map((bId: string) => {
-                          const benDef = benefitsList.find((def:any) => def.id === bId);
+                        {safeBenefits.map((bId: string) => {
+                          const benDef = orgBenefitsList.find((def:any) => def.id === bId);
                           const Icon = BENEFIT_ICONS[benDef?.icon_key || ''] || BENEFIT_ICONS['default'];
                           return (
                             <span key={bId} className="flex items-center gap-2 px-3.5 py-2 border border-[#F2F2F2] bg-[#FAFAFA] rounded-[6px] text-[10px] font-bold text-[#545454]">
@@ -401,7 +403,6 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
                     )}
                   </div>
 
-                  {/* Rodapé e Ações */}
                   <div className="flex gap-3 mt-auto pl-2">
                     <HzButton className="flex-1 bg-white border border-[#F2F2F2] hover:border-black text-black text-[9px] font-black uppercase tracking-widest py-3 rounded-[8px] transition-all">Gerir Permissões</HzButton>
                     <HzButton onClick={() => handleRevoke(aff.id, aff.entities?.display_name)} className="flex items-center justify-center gap-2 px-6 bg-transparent text-[#B6192E] hover:bg-[#B6192E] hover:text-white border border-[#B6192E]/30 hover:border-[#B6192E] text-[10px] font-black uppercase tracking-widest rounded-[8px] transition-all"><TrashIcon className="w-4 h-4" /></HzButton>
