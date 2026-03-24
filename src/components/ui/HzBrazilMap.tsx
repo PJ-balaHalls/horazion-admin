@@ -27,7 +27,7 @@ export function HzBrazilMap({ stateData }: HzBrazilMapProps) {
       .catch(err => console.error("Erro malha:", err));
   }, []);
 
-  if (!geoJson) return <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest animate-pulse">A Renderizar...</div>;
+  if (!geoJson) return <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest animate-pulse">A Renderizar Malha Geográfica...</div>;
 
   const maxUsers = Math.max(...Object.values(stateData), 1);
   const totalUsers = Object.values(stateData).reduce((a, b) => a + b, 0);
@@ -39,15 +39,15 @@ export function HzBrazilMap({ stateData }: HzBrazilMapProps) {
     return `rgba(182, 25, 46, ${intensity})`;
   };
 
+  // Conversão Nativa: Usa coordenadas brutas e deixa o SVG viewBox fazer a magia do enquadramento
   const createPath = (coordinates: any[][][], type: string) => {
-    const scale = 12; const offsetX = 850; const offsetY = 150;
-    const project = (coord: number[]) => [coord[0] * scale + offsetX, -coord[1] * scale + offsetY];
     let pathString = '';
     const polys = type === 'Polygon' ? [coordinates] : coordinates;
     polys.forEach((poly: any) => {
       poly.forEach((ring: any) => {
         ring.forEach((coord: number[], i: number) => {
-          const [x, y] = project(coord);
+          const x = coord[0]; // Longitude
+          const y = -coord[1]; // Inverte a Latitude (o Y do SVG cresce para baixo)
           pathString += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
         });
         pathString += 'Z ';
@@ -56,7 +56,7 @@ export function HzBrazilMap({ stateData }: HzBrazilMapProps) {
     return pathString;
   };
 
-  // Eventos de Rato
+  // Eventos de Rato (Arrastar e Largar)
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
     dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
@@ -71,12 +71,12 @@ export function HzBrazilMap({ stateData }: HzBrazilMapProps) {
   const handleMouseUp = () => setIsDragging(false);
 
   const handleZoom = (direction: 1 | -1) => {
-    setTransform(prev => ({ ...prev, scale: Math.max(0.5, Math.min(prev.scale + direction * 0.2, 3)) }));
+    setTransform(prev => ({ ...prev, scale: Math.max(0.5, Math.min(prev.scale + direction * 0.3, 4)) }));
   };
 
   return (
     <div 
-      className="w-full h-full relative overflow-hidden bg-white cursor-grab active:cursor-grabbing group select-none"
+      className="w-full h-full relative overflow-hidden bg-white cursor-grab active:cursor-grabbing group select-none flex items-center justify-center p-4"
       ref={containerRef}
       onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
     >
@@ -106,9 +106,14 @@ export function HzBrazilMap({ stateData }: HzBrazilMapProps) {
         <button onClick={() => setTransform({x:0, y:0, scale:1})} className="w-6 h-6 flex items-center justify-center text-[#A0A0A0] hover:bg-[#F2F2F2] hover:text-black rounded text-[8px] font-black uppercase transition-colors">■</button>
       </div>
 
+      {/* A Mágica do viewBox: 
+        As extremidades do Brasil variam de -74 a -34 na Longitude (Largura)
+        E de -5 a 34 na Latitude (Altura, com Y invertido).
+        O viewBox abaixo abraça perfeitamente essas coordenadas sem cortar nada! 
+      */}
       <svg 
-        viewBox="0 0 450 450" 
-        className="w-full h-full transition-transform duration-75 ease-out drop-shadow-sm"
+        viewBox="-75 -6 42 42" 
+        className="w-full h-full max-h-[400px] transition-transform duration-75 ease-out drop-shadow-sm"
         style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
       >
         {geoJson.features.map((feature: any) => {
@@ -120,7 +125,8 @@ export function HzBrazilMap({ stateData }: HzBrazilMapProps) {
               d={createPath(feature.geometry.coordinates, feature.geometry.type)}
               fill={getFillColor(sigla)}
               stroke="#FFFFFF"
-              strokeWidth={1 / transform.scale}
+              // A espessura da fronteira afina dinamicamente quando fazemos zoom para manter o visual elegante
+              strokeWidth={0.08 / transform.scale}
               className="transition-colors duration-200 hover:fill-black cursor-pointer"
               onMouseEnter={(e) => {
                 const rect = containerRef.current?.getBoundingClientRect();
