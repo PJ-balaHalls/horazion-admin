@@ -29,20 +29,18 @@ export default function UsersListPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [users, setUsers] = useState<RealProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
+  // 1. Função base para ir buscar os utilizadores
   const fetchUsers = async () => {
     setIsLoading(true);
+    setFetchError(null);
     try {
-      // Removido o ".order()" do banco para evitar crash caso a coluna não exista.
       const { data, error } = await supabase.from('profiles').select('*');
       
-      if (error) {
-        console.error("Erro do Supabase:", error);
-        alert(`Ocorreu um erro ao buscar os utilizadores: ${error.message}`);
-        return;
-      }
+      if (error) throw error;
 
-      // Ordenação feita pelo lado do cliente (Client-side) de forma segura
+      // Ordena pelos mais recentes
       const sortedData = (data || []).sort((a, b) => {
         if (a.created_at && b.created_at) {
           return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -51,14 +49,33 @@ export default function UsersListPage() {
       });
 
       setUsers(sortedData);
-    } catch (error) { 
-      console.error(error); 
+    } catch (error: any) { 
+      console.error("Erro ao buscar utilizadores:", error);
+      setFetchError(error.message || "Erro de permissão. Verifique as políticas RLS no Supabase.");
     } finally { 
       setIsLoading(false); 
     }
   };
 
-  useEffect(() => { fetchUsers(); }, []);
+  // 2. Motor de TEMPO REAL (WebSockets)
+  useEffect(() => {
+    // Busca inicial
+    fetchUsers();
+
+    // Cria um canal para escutar as atualizações em tempo real na tabela profiles
+    const subscription = supabase
+      .channel('public:profiles-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (payload) => {
+        console.log('🔄 Sincronização em tempo real ativada!', payload);
+        fetchUsers(); // Atualiza a lista automaticamente sem precisar dar refresh na página
+      })
+      .subscribe();
+
+    // Limpa o canal ao fechar a página
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, []);
 
   // Lógica de filtro blindada contra valores nulos
   const filteredUsers = users.filter(u => {
@@ -92,6 +109,17 @@ export default function UsersListPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-12 pb-20 p-8 animate-in fade-in">
       
+      {/* ALERTA DE ERRO (Se o RLS continuar bloqueando) */}
+      {fetchError && (
+        <div className="bg-[#B6192E]/10 border border-[#B6192E] text-[#B6192E] p-4 rounded-[12px] flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-sm">Acesso Bloqueado ao Banco de Dados</h3>
+            <p className="text-xs mt-1">{fetchError}</p>
+          </div>
+          <HzButton onClick={fetchUsers} className="bg-[#B6192E] text-white text-xs px-4 py-2 rounded">Tentar Novamente</HzButton>
+        </div>
+      )}
+
       {/* HEADER MINIMALISTA */}
       <div className="border-b border-[#F2F2F2] pb-6 flex justify-between items-end">
         <div>
@@ -107,7 +135,7 @@ export default function UsersListPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 bg-white border border-[#F2F2F2] rounded-[12px] h-[280px] overflow-hidden relative">
           <div className="absolute top-4 left-4 z-10 bg-white/90 px-3 py-1.5 border border-[#F2F2F2] rounded text-[9px] font-bold text-black uppercase tracking-widest flex items-center gap-2">
-             <span className="w-1.5 h-1.5 bg-black rounded-full animate-pulse"></span> GEOTAGGING
+             <span className="w-1.5 h-1.5 bg-black rounded-full animate-pulse"></span> {isLoading ? 'CARREGANDO' : 'GEOTAGGING'}
           </div>
           {isLoading ? <div className="w-full h-full flex items-center justify-center"><HzSkeleton className="w-full h-full" /></div> : <HzGeoMap markers={mapMarkers} zoom={4} center={{ lat: -14.235, lng: -51.925 }} />}
         </div>
@@ -177,7 +205,7 @@ export default function UsersListPage() {
                   </td>
                 </tr>
               ) : filteredUsers.map((user) => (
-                <tr key={user.id} className="hover:bg-[#FAFAFA] transition-colors group cursor-pointer" onClick={() => router.push(`/users/${user.id}`)}>
+                <tr key={user.id} className="hover:bg-[#FAFAFA] transition-colors group">
                   <td className="p-4 font-mono text-[10px] text-[#A0A0A0]">{user.horizion_id}</td>
                   
                   <td className="p-4">
@@ -218,10 +246,10 @@ export default function UsersListPage() {
                   </td>
 
                   <td className="p-4 text-right">
-                    {/* BOTÃO GERIR RESTAURADO E COM DESIGN MINIMALISTA */}
+                    {/* BOTÃO GERIR FUNCIONAL E EXPLÍCITO */}
                     <HzButton 
-                      variant="ghost" 
-                      className="text-[#A0A0A0] hover:text-white hover:bg-black border border-[#F2F2F2] hover:border-black text-[10px] font-bold px-4 py-2 rounded uppercase tracking-widest transition-all"
+                      onClick={() => router.push(`/users/${user.id}`)}
+                      className="bg-transparent text-[#A0A0A0] hover:text-white hover:bg-black border border-[#F2F2F2] hover:border-black text-[10px] font-bold px-4 py-2 rounded uppercase tracking-widest transition-all"
                     >
                       Gerir
                     </HzButton>
