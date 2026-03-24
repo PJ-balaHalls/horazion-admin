@@ -53,16 +53,26 @@ export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
   const loadData = async () => {
     setIsLoading(true); setActionError(null);
     
-    // Busca Afiliações
-    const { data: affData } = await supabase
+    // 1. Busca Afiliações
+    const { data: affData, error: affError } = await supabase
       .from('affiliations')
       .select(`id, affiliation_role, status, expires_at, association_data, entities ( id, display_name, slug, logo_url, metadata )`)
       .eq('profile_id', userId);
+      
+    if (affError) console.error("Erro ao buscar afiliações:", affError);
     if (affData) setAffiliations(affData);
 
-    // Busca Organizações com dados ricos
-    const { data: orgData } = await supabase.from('entities').select('id, display_name, slug, logo_url, metadata').eq('status', 'active');
-    if (orgData) setAvailableOrgs(orgData);
+    // 2. Busca Organizações (REMOVIDO O FILTRO DE STATUS QUE ESTAVA A BLOQUEAR A LISTA)
+    const { data: orgData, error: orgError } = await supabase
+      .from('entities')
+      .select('id, display_name, slug, logo_url, metadata');
+      
+    if (orgError) {
+      console.error("Erro crítico ao buscar as Entidades (Organizações):", orgError);
+      setActionError({ title: "Erro de Leitura", msg: "As organizações não puderam ser carregadas do banco de dados. Verifique a consola (F12)." });
+    } else {
+      setAvailableOrgs(orgData || []);
+    }
     
     setIsLoading(false);
   };
