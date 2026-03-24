@@ -1,19 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  
-  // Ignora erros de ESLint durante o processo de build na nuvem
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  
-  // Ignora erros de TypeScript durante o processo de build na nuvem
+  // Ignora erros de TypeScript que possam quebrar a compilação
   typescript: {
     ignoreBuildErrors: true,
   },
   
-  // Opcional, mas recomendado para otimizar o empacotamento em provedores de nuvem
+  // Otimiza para deploys modernos (Netlify, Vercel, Docker)
   output: "standalone",
 };
 
