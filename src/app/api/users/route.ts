@@ -6,10 +6,14 @@ const ProfileUpdateSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   full_name: z.string().min(1),
-  role: z.string(),
-  horizion_id: z.string(),
+  first_name: z.string().optional(),
+  last_name: z.string().optional(),
   username: z.string().optional(),
   status: z.string().optional(),
+  role: z.string(),
+  horizion_id: z.string(),
+  entity_id: z.string().optional(),
+  affiliation_role: z.string().optional(),
   flags: z.object({
     send_notification: z.boolean(),
     require_completion: z.boolean(),
@@ -71,7 +75,7 @@ export async function POST(req: Request) {
       throw new Error("FALHA CRÍTICA: O Supabase não devolveu o objeto do utilizador recém-criado.");
     }
 
-    // 2. Limpeza e normalização de dados
+    // 2. Limpeza de dados de localização e formato
     const documentId = cleanStr(rawData.document_id);
     const cep = cleanStr(rawData.cep);
     const address = cleanStr(rawData.address);
@@ -81,11 +85,9 @@ export async function POST(req: Request) {
     const rawCountry = cleanStr(rawData.country);
     const dbCountry = rawCountry ? rawCountry.substring(0, 2).toUpperCase() : null;
     
-    // Extração do novo estado da conta
     const accountStatus = cleanStr(validData.status) || 'active';
 
-    // 3. Estruturação do Payload JSONB (custom_data)
-    // Injetamos aqui as novas variáveis: first_name, last_name, phone_code e location_settings
+    // 3. Estruturação do Payload JSONB
     const structuredCustomData = {
       personal_info: {
         first_name: cleanStr(rawData.first_name),
@@ -107,17 +109,17 @@ export async function POST(req: Request) {
       system_flags: {
         must_complete_profile: validData.flags.require_completion,
         notification_sent: validData.flags.send_notification,
-        provisional_password: validData.password // [ARCH-HZ-014] Senha gravada apenas para o primeiro acesso
+        provisional_password: validData.password // Gravado temporariamente para o Dashboard
       },
       preferences: { ads_enabled: true, profile_promoted: false, focus_mode: false, hide_metrics: false }
     };
 
-    // 4. Inserção na tabela core de Profiles
-    const { error: profileError } = await supabaseAdmin.from('profiles').insert({
+    // 4. Salvar na Tabela Profiles (Usando UPSERT para evitar conflito com Triggers nativos do Supabase)
+    const { error: profileError } = await supabaseAdmin.from('profiles').upsert({
       id: authData.user.id,
       horizion_id: validData.horizion_id,
-      username: cleanStr(validData.username), // Nova Coluna
-      status: accountStatus,                  // Nova Coluna
+      username: cleanStr(validData.username), 
+      status: accountStatus,                  
       full_name: validData.full_name,
       email: validData.email,
       role: validData.role,
@@ -127,22 +129,36 @@ export async function POST(req: Request) {
       state: dbState,
       country: dbCountry,
       custom_data: structuredCustomData,
-      is_active: accountStatus !== 'suspended' // Mantém a compatibilidade legada da flag
+      is_active: accountStatus !== 'suspended'
     });
 
     if (profileError) {
-      // Rollback: se falhar a criação do perfil, apaga a conta do Supabase Auth para manter consistência
+      // Rollback de segurança se falhar o UPSERT
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
       return NextResponse.json({ error_code: "HZ-DB_001", user_message: "Falha ao gravar identidade na tabela profiles.", details: profileError }, { status: 400 });
     }
 
-    // 5. Registo no Audit Log
+    // 5. Vinculação B2B (Grafo de Afiliação)
+    if (validData.entity_id && validData.entity_id.trim() !== '') {
+      const { error: affiliationError } = await supabaseAdmin.from('affiliations').insert({
+        profile_id: authData.user.id,
+        entity_id: validData.entity_id,
+        affiliation_role: validData.affiliation_role || 'member',
+        status: 'active'
+      });
+      
+      if (affiliationError) {
+        console.warn("[HORAZION WARNING] Falha ao vincular usuário à organização (B2B):", affiliationError);
+      }
+    }
+
+    // 6. Auditoria (Opcional, não bloqueia a requisição se falhar)
     try {
       const ipAddress = req.headers.get('x-forwarded-for') || '127.0.0.1';
       await supabaseAdmin.schema('admin').from('audit_logs').insert({
         target_id: authData.user.id,
         action: 'IDENTITY_PROVISIONED',
-        details: { role_assigned: validData.role, created_via: 'Horazion Admin Dashboard', status: accountStatus },
+        details: { role_assigned: validData.role, status: accountStatus, created_via: 'Horazion Admin Dashboard' },
         ip_address: ipAddress
       });
     } catch (auditException) {
