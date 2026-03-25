@@ -1,26 +1,42 @@
 'use client';
 
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { HzButton, HzSkeleton, HzInput, HzSelect } from '@/components/ui';
-import { BuildingOfficeIcon, TrashIcon, LinkIcon, MagnifyingGlassIcon, FunnelIcon, GiftIcon, ShieldCheckIcon, ClockIcon, CheckCircleIcon, ChevronLeftIcon, ChevronRightIcon, BriefcaseIcon } from '@heroicons/react/24/outline';
+import { HzButton, HzSkeleton, HzInput } from '@/components/ui';
+import { 
+  BuildingOfficeIcon, TrashIcon, LinkIcon, MagnifyingGlassIcon, 
+  ShieldCheckIcon, BriefcaseIcon, CheckCircleIcon, IdentificationIcon, 
+  DocumentTextIcon, CalendarIcon, LifebuoyIcon, PrinterIcon, DocumentDuplicateIcon,
+  GiftIcon
+} from '@heroicons/react/24/outline';
 
-interface UserAffiliationsTabProps { userId: string; }
+interface UserAffiliationsTabProps { userId?: string; }
 
-// Catálogo de Ícones para Benefícios
-const BENEFIT_ICONS: Record<string, React.ElementType> = {
-  'vip_access': ShieldCheckIcon, 'fee_waiver': GiftIcon, 'priority_support': ClockIcon, 'default': GiftIcon
+// [ARCH-HZ] Dicionário Global de Erros para rastreabilidade
+const ERROR_CODES = {
+  FETCH: { code: 'HZ-AFF_001', msg: 'Falha ao carregar matriz de afiliações.' },
+  INSERT: { code: 'HZ-AFF_002', msg: 'Não foi possível injetar o vínculo corporativo.' },
+  REVOKE: { code: 'HZ-AFF_003', msg: 'Falha ao revogar vínculo corporativo.' },
+  CONTEXT: { code: 'HZ-AFF_004', msg: 'Identidade de utilizador não detetada na interface nem na URL.' }
 };
 
-const ROLES_DEFINITION = [
-  { id: 'member', label: 'Membro Padrão', desc: 'Permissões de leitura e interação base.' },
-  { id: 'finance', label: 'Gestor Financeiro', desc: 'Gestão de faturas, orçamentos e transações.' },
-  { id: 'admin', label: 'Administrador Org', desc: 'Controlo total e provisionamento de usuários.' }
-];
+interface AffiliationSuccessData {
+  orgName: string;
+  orgLogo: string;
+  orgSlug: string;
+  orgColor: string;
+  jobTitle: string;
+  department: string;
+  scope: string;
+  purpose: string;
+  expiresAt: string;
+  timestamp: string;
+  benefits: any[];
+}
 
-// Formatador de Datas Seguro (Evita quebrar a Netlify)
 const safeFormatDate = (dateString: any) => {
-  if (!dateString) return 'Vitalício';
+  if (!dateString) return 'Acesso Vitalício';
   try {
     const d = new Date(dateString);
     if (isNaN(d.getTime())) return 'Data Inválida';
@@ -41,375 +57,517 @@ const isDateExpired = (dateString: any) => {
   }
 };
 
-export function UserAffiliationsTab({ userId }: UserAffiliationsTabProps) {
-  const carouselRef = useRef<HTMLDivElement>(null);
-  
-  // Dados Principais
+export function UserAffiliationsTab({ userId: propUserId }: UserAffiliationsTabProps) {
+  // [FE-HZ] Self-Healing: Extração robusta do ID
+  const params = useParams();
+  const resolvedUserId = propUserId || (params?.id as string);
+
+  // Estados Base
   const [affiliations, setAffiliations] = useState<any[]>([]);
   const [availableOrgs, setAvailableOrgs] = useState<any[]>([]);
-  
-  // UI States
   const [isLoading, setIsLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [currentStep, setCurrentStep] = useState(1);
-  const [actionError, setActionError] = useState<{title: string, msg: string} | null>(null);
+  const [actionError, setActionError] = useState<{ title: string, msg: string, detail?: string } | null>(null);
 
-  // Form States
+  // Estados do Wizard B2B
   const [isAdding, setIsAdding] = useState(false);
-  const [selectedEntity, setSelectedEntity] = useState('');
-  const [jobTitle, setJobTitle] = useState('');
-  const [selectedRole, setSelectedRole] = useState('member');
-  const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
-  const [expirationDate, setExpirationDate] = useState('');
+  const [selectedEntityId, setSelectedEntityId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  
+  // Campos do Contrato
+  const [jobTitle, setJobTitle] = useState('');
+  const [department, setDepartment] = useState('');
+  const [scope, setScope] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [expirationDate, setExpirationDate] = useState('');
 
-  const loadData = async () => {
-    setIsLoading(true); setActionError(null);
+  // Estado de Sucesso & Exportação
+  const [successData, setSuccessData] = useState<AffiliationSuccessData | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+
+  // Filtros
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // [CORE-HZ] Ciclo de Vida e Busca de Dados
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setActionError(null);
+
+    if (!resolvedUserId) {
+      setActionError({ 
+        title: ERROR_CODES.CONTEXT.code, 
+        msg: ERROR_CODES.CONTEXT.msg, 
+        detail: 'O componente pai não enviou o ID e a URL não contém um parâmetro válido.' 
+      });
+      setIsLoading(false);
+      return;
+    }
 
     try {
-      // 1. Busca Afiliações
       const { data: affData, error: affError } = await supabase
         .from('affiliations')
-        .select(`id, affiliation_role, status, expires_at, association_data, entities ( id, display_name, slug, logo_url, metadata )`)
-        .eq('profile_id', userId);
-        
-      if (affError) throw affError;
-      setAffiliations(affData || []);
+        .select('id, entity_id, affiliation_role, status, expires_at, association_data')
+        .eq('profile_id', resolvedUserId);
 
-      // 2. Busca Organizações
-      const { data: orgData, error: orgError } = await supabase
+      if (affError) throw new Error(affError.message || 'Falha de leitura na tabela de afiliações.');
+
+      const { data: orgsData, error: orgsError } = await supabase
         .from('entities')
-        .select('id, display_name, slug, logo_url, metadata, status');
-        
-      if (orgError) throw orgError;
-      setAvailableOrgs(orgData || []);
+        .select('id, slug, display_name, logo_url, is_verified, website, metadata, status')
+        .order('created_at', { ascending: false });
+
+      if (orgsError) throw new Error(orgsError.message || 'Falha de leitura na tabela de entidades.');
+
+      const safeOrgsData = Array.isArray(orgsData) ? orgsData : [];
+      setAvailableOrgs(safeOrgsData);
+
+      const safeAffData = Array.isArray(affData) ? affData : [];
+      const hydratedAffiliations = safeAffData.map(aff => {
+        const org = safeOrgsData.find(o => o.id === aff.entity_id);
+        return { ...aff, entities: org };
+      });
+
+      setAffiliations(hydratedAffiliations);
 
     } catch (error: any) {
-      console.error(error);
-      setActionError({ title: "Falha de Leitura", msg: error.message || "Erro ao conectar ao banco de dados." });
+      const errorDetail = error?.message || error?.details || JSON.stringify(error);
+      setActionError({ title: ERROR_CODES.FETCH.code, msg: ERROR_CODES.FETCH.msg, detail: errorDetail });
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [resolvedUserId]);
 
-  useEffect(() => { loadData(); }, [userId]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  // Benefícios extraídos dinamicamente da Org Selecionada
-  const currentOrgBenefits = useMemo(() => {
-    if (!selectedEntity) return [];
-    const org = availableOrgs.find(o => o.id === selectedEntity);
-    return org?.metadata?.defined_benefits || [];
-  }, [selectedEntity, availableOrgs]);
+  const selectedEntityData = useMemo(() => 
+    availableOrgs.find(o => o.id === selectedEntityId), 
+  [selectedEntityId, availableOrgs]);
 
-  const toggleBenefit = (benefitId: string) => {
-    setSelectedBenefits(prev => prev.includes(benefitId) ? prev.filter(b => b !== benefitId) : [...prev, benefitId]);
-  };
+  const primaryColor = selectedEntityData?.metadata?.branding?.primary_color || '#000000';
 
-  // INJEÇÃO NO BANCO (MÉTODO BLINDADO)
+  const filteredAffiliations = useMemo(() => {
+    return affiliations.filter(aff => {
+      const term = (searchTerm || '').toLowerCase();
+      const displayName = (aff.entities?.display_name || '').toLowerCase();
+      const slugName = (aff.entities?.slug || '').toLowerCase();
+      return displayName.includes(term) || slugName.includes(term);
+    });
+  }, [affiliations, searchTerm]);
+
+  // [CORE-HZ] Injeção e Geração de Certificado Estruturado
   const handleAddAffiliation = async () => {
-    if (!selectedEntity) return alert("Selecione uma organização.");
-    if (!userId) return setActionError({ title: "Erro de Contexto", msg: "O ID do utilizador não existe nesta página." });
-    
-    setActionError(null); setIsSaving(true);
+    if (!selectedEntityId || !resolvedUserId) return;
+    setIsSaving(true); 
+    setActionError(null);
 
-    // Payload Limpo e Direto (Sem validadores externos que possam falhar)
     const payload = {
-      profile_id: userId,
-      entity_id: selectedEntity,
-      affiliation_role: selectedRole,
+      profile_id: resolvedUserId,
+      entity_id: selectedEntityId,
+      affiliation_role: 'member',
       status: 'active',
       expires_at: expirationDate ? new Date(expirationDate).toISOString() : null,
       association_data: { 
-        job_title: jobTitle.trim() || 'Membro', 
-        benefits: selectedBenefits 
+        job_title: jobTitle.trim() || 'Membro Colaborador',
+        department: department.trim() || 'Geral',
+        scope: scope.trim() || 'Acesso Padrão ao Hub',
+        purpose: purpose.trim() || 'Integração B2B'
       }
     };
 
     const { error } = await supabase.from('affiliations').insert([payload]);
 
     if (error) {
-      console.error("ERRO SUPABASE:", error);
-      setActionError({ 
-        title: "Falha ao Injetar Vínculo", 
-        msg: error.message.includes('23505') ? 'Este vínculo já existe.' : error.message 
-      });
+      console.error('[CORE-HZ] Falha na injeção Supabase:', error);
+      setActionError({ title: ERROR_CODES.INSERT.code, msg: ERROR_CODES.INSERT.msg, detail: error.message });
+      setIsSaving(false);
     } else {
-      setIsAdding(false); setCurrentStep(1); setSelectedEntity(''); setJobTitle(''); setSelectedRole('member'); setSelectedBenefits([]); setExpirationDate('');
-      await loadData();
+      // Extração resiliente dos benefícios da organização
+      const rawBenefits = selectedEntityData.metadata?.defined_benefits || selectedEntityData.metadata?.benefits_engine?.list || [];
+      const extractedBenefits = Array.isArray(rawBenefits) && rawBenefits.length > 0 
+        ? rawBenefits 
+        : [{ id: 'b1', label: 'Acesso Global ao Workspace', desc: 'Permissão de leitura aos painéis corporativos.' },
+           { id: 'b2', label: 'Single Sign-On (SSO)', desc: 'Autenticação integrada com HorizionID.' }];
+
+      setSuccessData({
+        orgName: selectedEntityData.display_name,
+        orgLogo: selectedEntityData.logo_url,
+        orgSlug: selectedEntityData.slug,
+        orgColor: primaryColor,
+        jobTitle: payload.association_data.job_title,
+        department: payload.association_data.department,
+        scope: payload.association_data.scope,
+        purpose: payload.association_data.purpose,
+        expiresAt: payload.expires_at || 'Acesso Vitalício',
+        timestamp: new Date().toISOString(),
+        benefits: extractedBenefits
+      });
+      setIsSaving(false);
     }
-    setIsSaving(false);
+  };
+
+  const handleFinishSuccess = async () => {
+    setSuccessData(null);
+    setIsCopied(false);
+    setIsAdding(false);
+    setSelectedEntityId('');
+    setJobTitle('');
+    setDepartment('');
+    setScope('');
+    setPurpose('');
+    setExpirationDate('');
+    await loadData();
   };
 
   const handleRevoke = async (id: string, orgName: string) => {
-    if(!confirm(`Revogar o acesso definitivo ao Hub ${orgName}?`)) return;
+    if (!confirm(`Revogar de forma irreversível o acesso desta conta ao Hub ${orgName || 'Desconhecido'}?`)) return;
+    setIsLoading(true);
     const { error } = await supabase.from('affiliations').delete().eq('id', id);
-    if (error) setActionError({ title: "Falha na Revogação", msg: error.message });
-    else await loadData();
+    if (error) {
+      setActionError({ title: ERROR_CODES.REVOKE.code, msg: ERROR_CODES.REVOKE.msg, detail: error.message });
+      setIsLoading(false);
+    } else {
+      await loadData();
+    }
   };
 
-  const scrollCarousel = (direction: -1 | 1) => {
-    if (carouselRef.current) carouselRef.current.scrollBy({ left: 300 * direction, behavior: 'smooth' });
+  // [FE-HZ] Motores de Exportação (Texto e Impressão)
+  const handlePrintPDF = () => {
+    window.print();
   };
 
-  // Filtro Blindado
-  const filteredAffiliations = useMemo(() => {
-    return affiliations.filter(aff => {
-      const term = (searchTerm || '').toLowerCase();
-      const displayName = (aff.entities?.display_name || '').toLowerCase();
-      const slug = (aff.entities?.slug || '').toLowerCase();
-      
-      const matchSearch = displayName.includes(term) || slug.includes(term);
-      const matchStatus = statusFilter === 'all' || aff.status === statusFilter;
-      return matchSearch && matchStatus;
-    });
-  }, [affiliations, searchTerm, statusFilter]);
+  const handleCopyText = async () => {
+    if (!successData) return;
+    const textToCopy = `
+=== CERTIFICADO DE PROVISIONAMENTO HORIZION ===
+Data da Emissão: ${new Date(successData.timestamp).toLocaleString('pt-PT')}
+ID de Triagem Automática: VINC-${Math.random().toString(36).substring(2, 8).toUpperCase()}
 
-  if (isLoading) return <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><HzSkeleton className="h-64 w-full rounded-[12px]" /><HzSkeleton className="h-64 w-full rounded-[12px]" /></div>;
+[ DADOS INSTITUCIONAIS ]
+- Organização: ${successData.orgName}
+- Identificador (Slug): @${successData.orgSlug}
+
+[ PARÂMETROS DO CONTRATO ]
+- Cargo Atribuído: ${successData.jobTitle}
+- Departamento: ${successData.department}
+- Escopo de Acesso: ${successData.scope}
+- Propósito do Vínculo: ${successData.purpose}
+- Expiração do Acesso: ${safeFormatDate(successData.expiresAt)}
+
+[ MOTOR DE BENEFÍCIOS ATIVOS ]
+${successData.benefits.map(b => `- ${b.label || b.id}: ${b.desc || 'Concedido'}`).join('\n')}
+
+[ GOVERNANÇA E COMPLIANCE ]
+- Suporte Oficial: enterprise@horazion.com
+- Status do Motor: Sincronizado e Ativo
+===============================================
+    `.trim();
+
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 3000);
+    } catch (err) {
+      alert("Falha ao copiar texto para a área de transferência.");
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in">
+        <HzSkeleton className="h-64 w-full rounded-[12px]" />
+        <HzSkeleton className="h-64 w-full rounded-[12px]" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 animate-in fade-in pb-10">
       
-      {/* ALERTAS */}
+      {/* Estilos para impressão (Esconde UI extra no PDF/Imagem gerado) */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @media print {
+          body * { visibility: hidden; }
+          #printable-certificate, #printable-certificate * { visibility: visible; }
+          #printable-certificate { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none !important; border: none !important; }
+          .no-print { display: none !important; }
+        }
+      `}} />
+
+      {/* Header B2B */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-[#F2F2F2] pb-6 no-print">
+        <div>
+          <h3 className="text-3xl font-bold text-black tracking-tighter">Grafo de Conexões B2B</h3>
+          <p className="text-sm font-medium text-[#A0A0A0] uppercase tracking-widest mt-2">Provisionamento e Governança de Identidades Corporativas.</p>
+        </div>
+        {!isAdding && !successData && (
+          <HzButton onClick={() => setIsAdding(true)} disabled={!resolvedUserId} className="bg-black text-white hover:bg-[#1A1A1A] px-6 py-3 rounded-[8px] text-[10px] font-black uppercase tracking-widest shadow-sm transition-all disabled:opacity-50">
+            <span className="flex items-center gap-2.5"><LinkIcon className="w-4 h-4" /> Novo Vínculo Institucional</span>
+          </HzButton>
+        )}
+      </div>
+
       {actionError && (
-        <div className="p-4 border border-[#B6192E] bg-[#B6192E]/5 rounded-[8px] flex justify-between items-start shadow-sm">
-          <div className="flex gap-3 items-center">
-            <CheckCircleIcon className="w-5 h-5 text-[#B6192E]" />
-            <div><h4 className="text-xs font-black text-[#B6192E] uppercase tracking-widest">{actionError.title}</h4><p className="text-[11px] font-bold text-[#B6192E]/80 mt-1">{actionError.msg}</p></div>
+        <div className="p-4 border-l-4 border-[#B6192E] bg-[#B6192E]/5 flex justify-between items-start rounded-r-[8px] no-print">
+          <div className="flex gap-3 items-start">
+            <CheckCircleIcon className="w-5 h-5 text-[#B6192E] shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-xs font-black text-[#B6192E] uppercase tracking-widest">{actionError.title}</h4>
+              <p className="text-sm font-medium text-[#B6192E]/90 mt-1">{actionError.msg}</p>
+              {actionError.detail && <p className="text-[10px] font-mono mt-2 text-[#B6192E]/70 break-all">{actionError.detail}</p>}
+            </div>
           </div>
           <button onClick={() => setActionError(null)} className="text-[#B6192E] text-[10px] font-bold uppercase hover:bg-[#B6192E]/10 px-3 py-1.5 rounded transition-colors">Fechar</button>
         </div>
       )}
 
-      {/* HEADER B2B */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-[#F2F2F2] pb-6">
-        <div>
-          <h3 className="text-3xl font-bold text-black tracking-tighter">Grafo de Identidades B2B</h3>
-          <p className="text-sm font-medium text-[#A0A0A0] uppercase tracking-widest mt-2">Provisionamento de Acessos e Motor de Benefícios.</p>
-        </div>
-        {!isAdding && (
-          <HzButton onClick={() => setIsAdding(true)} className="bg-black text-white hover:bg-[#B6192E] px-6 py-3 rounded-[8px] text-[10px] font-black uppercase tracking-widest transition-all shadow-sm">
-            <span className="flex items-center gap-2.5"><LinkIcon className="w-4 h-4" /> NOVO VÍNCULO CORPORATIVO</span>
-          </HzButton>
-        )}
-      </div>
-
-      {/* WIZARD PREMIUM (CRIAÇÃO DE VÍNCULO) */}
-      {isAdding && (
-        <div className="border border-black bg-[#FAFAFA] rounded-[16px] shadow-sm animate-in slide-in-from-top-4 overflow-hidden relative">
-          <div className="absolute top-0 left-0 h-full w-1 bg-black"></div>
+      {/* TEMPLATE MESSAGE: CERTIFICADO DE PROVISIONAMENTO EXPORTÁVEL */}
+      {successData && (
+        <div id="printable-certificate" className="bg-white border border-[#E5E5E5] rounded-[16px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-500 max-w-4xl mx-auto relative mb-10">
+          <div className="absolute top-0 left-0 w-full h-2" style={{ backgroundColor: successData.orgColor }}></div>
           
-          <div className="p-8 space-y-10">
-            {/* Steps */}
-            <div className="flex gap-1.5 border-b border-[#F2F2F2] pb-4">
-               {[1,2,3].map(step => (
-                 <div key={step} className={`w-8 h-8 flex items-center justify-center text-[10px] font-black uppercase tracking-widest border transition-colors ${currentStep === step ? 'bg-black text-white border-black' : step < currentStep ? 'bg-[#FAFAFA] text-black border-black' : 'bg-[#FAFAFA] text-[#A0A0A0] border-[#F2F2F2]'}`}>
-                    {String(step).padStart(2, '0')}
-                 </div>
-               ))}
-               <p className="text-[10px] font-black text-black uppercase tracking-widest mt-2 ml-3">
-                  {currentStep === 1 ? 'Seleção do Hub' : currentStep === 2 ? 'Definição de Função' : 'Atribuição de Benefícios'}
-               </p>
-            </div>
-
-            {/* Passo 1: Carrossel */}
-            {currentStep === 1 && (
-              <div className="animate-in fade-in duration-500">
-                <div className="flex justify-between items-end mb-6">
-                  <div>
-                    <h4 className="text-sm font-black text-black uppercase tracking-widest">Selecione o Hub Corporativo</h4>
-                    <p className="text-[10px] text-[#A0A0A0] font-medium mt-1 uppercase">Afiliação da Identidade ao Ecossistema da Organização.</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => scrollCarousel(-1)} className="p-2 border border-[#F2F2F2] rounded-full text-black hover:bg-white hover:border-black transition-all shadow-sm"><ChevronLeftIcon className="w-4 h-4" /></button>
-                    <button onClick={() => scrollCarousel(1)} className="p-2 border border-[#F2F2F2] rounded-full text-black hover:bg-white hover:border-black transition-all shadow-sm"><ChevronRightIcon className="w-4 h-4" /></button>
-                  </div>
+          <div className="p-10 md:p-14">
+            
+            {/* Header do Certificado */}
+            <div className="flex flex-col md:flex-row items-center md:items-start justify-between border-b border-[#F2F2F2] pb-8 mb-8">
+              <div className="flex items-center gap-5 mb-6 md:mb-0">
+                <div className="w-16 h-16 rounded-[12px] bg-[#FAFAFA] border border-[#E5E5E5] flex items-center justify-center shadow-sm overflow-hidden shrink-0">
+                  {successData.orgLogo ? <img src={successData.orgLogo} className="w-full h-full object-cover" alt="Logo" /> : <BuildingOfficeIcon className="w-8 h-8 text-[#A0A0A0]" />}
                 </div>
-                
-                <div ref={carouselRef} className="flex overflow-x-auto gap-5 pb-6 snap-x custom-scrollbar pl-2">
-                  {availableOrgs.length === 0 ? (
-                     <div className="w-full text-center p-12 text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhuma organização disponível.</div>
-                  ) : (
-                    availableOrgs.map(org => {
-                      const isSelected = selectedEntity === org.id;
-                      const primaryColor = org.metadata?.branding?.primary_color || '#000000';
-                      return (
-                        <div 
-                          key={org.id} onClick={() => setSelectedEntity(org.id)}
-                          className={`snap-start flex-shrink-0 w-72 p-6 rounded-[12px] border cursor-pointer transition-all duration-300 relative bg-white group flex items-center gap-4 ${isSelected ? 'shadow-lg' : 'border-[#F2F2F2] hover:border-black hover:bg-[#FAFAFA]'}`}
-                          style={{ borderColor: isSelected ? primaryColor : undefined }}
-                        >
-                          <div className="absolute top-0 left-0 w-1.5 h-full transition-opacity opacity-0 group-hover:opacity-100" style={{ backgroundColor: primaryColor, opacity: isSelected ? 1 : undefined }}></div>
-                          <div className="w-16 h-16 rounded-[8px] border border-[#F2F2F2] bg-[#FAFAFA] flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
-                            {org.logo_url ? <img src={org.logo_url} className="w-full h-full object-cover" /> : <BuildingOfficeIcon className="w-8 h-8 text-[#A0A0A0]" />}
-                          </div>
-                          <div><h5 className="text-sm font-black text-black leading-tight line-clamp-1">{org.display_name}</h5><p className="text-[10px] font-mono text-[#A0A0A0] mt-1 font-bold">@{org.slug}</p></div>
-                          {isSelected && <div className="absolute top-4 right-4"><CheckCircleIcon className="w-4 h-4" style={{ color: primaryColor }} /></div>}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Passo 2: Função e Hierarquia */}
-            {currentStep === 2 && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in duration-500">
                 <div>
-                   <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">Hierarquia de Acesso Horazion</h4>
-                   <div className="space-y-4">
-                     {ROLES_DEFINITION.map(role => (
-                       <div key={role.id} onClick={() => setSelectedRole(role.id)} className={`p-5 rounded-[12px] border cursor-pointer transition-all ${selectedRole === role.id ? 'border-black bg-black shadow-md' : 'border-[#F2F2F2] bg-white hover:border-black/30'}`}>
-                         <h5 className={`text-xs font-black uppercase tracking-widest ${selectedRole === role.id ? 'text-white' : 'text-black'}`}>{role.label}</h5>
-                         <p className={`text-[10px] mt-2 font-medium leading-relaxed ${selectedRole === role.id ? 'text-gray-300' : 'text-[#A0A0A0]'}`}>{role.desc}</p>
-                       </div>
-                     ))}
-                   </div>
-                </div>
-                <div className="space-y-6">
-                    <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">Dados no Hub</h4>
-                    <HzInput label="Função Real / Cargo (Ex: Sénior Dev)" value={jobTitle} onChange={e => setJobTitle(e.target.value)} icon={BriefcaseIcon} />
-                    <HzInput type="date" label="Data de Expiração Automática (Opcional)" value={expirationDate} onChange={e => setExpirationDate(e.target.value)} icon={ClockIcon} />
+                  <h2 className="text-2xl font-black text-black tracking-tight">{successData.orgName}</h2>
+                  <p className="text-xs font-mono font-bold text-[#A0A0A0] uppercase mt-1">@{successData.orgSlug}</p>
                 </div>
               </div>
-            )}
-
-            {/* Passo 3: Benefícios */}
-            {currentStep === 3 && (
-              <div className="animate-in fade-in duration-500">
-                  <h4 className="text-sm font-black text-black uppercase tracking-widest mb-5">Atribuição de Benefícios</h4>
-                  {!currentOrgBenefits || currentOrgBenefits.length === 0 ? (
-                     <div className="p-10 text-center border border-[#F2F2F2] rounded-[12px] bg-white text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest">Nenhum benefício configurado neste Hub corporativo.</div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                      {currentOrgBenefits.map((benefit: any) => {
-                        const isChecked = selectedBenefits.includes(benefit.id);
-                        const Icon = BENEFIT_ICONS[benefit.icon_key || ''] || BENEFIT_ICONS['default'];
-                        return (
-                          <div 
-                            key={benefit.id} onClick={() => toggleBenefit(benefit.id)}
-                            className={`p-5 rounded-[12px] border cursor-pointer transition-all flex gap-4 ${isChecked ? 'border-black bg-white shadow-sm' : 'border-[#F2F2F2] bg-white hover:border-black/30'}`}
-                          >
-                            <div className={`w-10 h-10 rounded-[8px] flex items-center justify-center shrink-0 ${isChecked ? 'bg-black text-white' : 'bg-[#FAFAFA] text-[#A0A0A0]'}`}><Icon className="w-5 h-5" /></div>
-                            <div>
-                              <h5 className="text-[11px] font-black text-black uppercase tracking-widest">{benefit.label}</h5>
-                              <p className="text-[9px] font-medium text-[#A0A0A0] mt-1.5 leading-tight">{benefit.desc}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+              <div className="text-center md:text-right">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-green-50 border border-green-200 text-green-700 text-[9px] font-black uppercase tracking-widest mb-2">
+                  <CheckCircleIcon className="w-3.5 h-3.5"/> Provisionamento Ativo
+                </span>
+                <p className="text-[10px] font-mono text-[#A0A0A0] uppercase font-bold">Gerado em: {new Date(successData.timestamp).toLocaleString('pt-PT')}</p>
               </div>
-            )}
-          </div>
+            </div>
 
-          {/* Navegação do Wizard */}
-          <div className="flex justify-between gap-4 p-6 bg-white border-t border-[#F2F2F2]">
-            <HzButton variant="ghost" onClick={() => setIsAdding(false)} className="text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest hover:text-black">Cancelar</HzButton>
-            <div className="flex gap-3">
-               {currentStep > 1 && <HzButton variant="ghost" onClick={() => setCurrentStep(prev => prev - 1)} className="text-[10px] font-bold text-black uppercase tracking-widest hover:text-white hover:bg-black border border-[#F2F2F2] rounded px-5">Voltar</HzButton>}
-               {currentStep < 3 && <HzButton onClick={() => setCurrentStep(prev => prev + 1)} disabled={currentStep === 1 && !selectedEntity} className="bg-black text-white text-[10px] font-bold uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">Seguinte</HzButton>}
-               {currentStep === 3 && <HzButton onClick={handleAddAffiliation} disabled={isSaving} className="bg-black text-white text-[10px] font-black uppercase tracking-widest px-8 py-3 rounded-[8px] hover:bg-[#B6192E] transition-all shadow-sm">{isSaving ? 'A INJETAR...' : 'CONFIRMAR AFILIAÇÃO'}</HzButton>}
+            {/* Corpo do Documento: Listas Estruturadas */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-10 mb-10">
+              
+              {/* Bloco 1: Parâmetros do Contrato */}
+              <div>
+                <h3 className="text-[10px] font-black text-[#A0A0A0] uppercase tracking-widest mb-4 flex items-center gap-2">
+                  <DocumentTextIcon className="w-4 h-4"/> Parâmetros do Contrato
+                </h3>
+                <ul className="space-y-4 bg-[#FAFAFA] border border-[#F2F2F2] rounded-[12px] p-5">
+                  <li>
+                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-wider mb-1">Cargo Atribuído</span>
+                    <strong className="text-xs font-black text-black">{successData.jobTitle}</strong>
+                  </li>
+                  <li>
+                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-wider mb-1">Departamento Institucional</span>
+                    <strong className="text-xs font-black text-black">{successData.department}</strong>
+                  </li>
+                  <li>
+                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-wider mb-1">Escopo de Acesso</span>
+                    <strong className="text-xs font-medium text-black leading-snug">{successData.scope}</strong>
+                  </li>
+                  <li>
+                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-wider mb-1">Propósito do Vínculo</span>
+                    <strong className="text-xs font-medium text-black leading-snug">{successData.purpose}</strong>
+                  </li>
+                  <li>
+                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-wider mb-1">Validade Contratual</span>
+                    <strong className="text-xs font-black text-black">{safeFormatDate(successData.expiresAt)}</strong>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Bloco 2: Benefícios e Compliance */}
+              <div className="flex flex-col gap-8">
+                <div>
+                  <h3 className="text-[10px] font-black text-[#A0A0A0] uppercase tracking-widest mb-4 flex items-center gap-2">
+                    <GiftIcon className="w-4 h-4"/> Motor de Benefícios Ativos
+                  </h3>
+                  <ul className="space-y-3">
+                    {successData.benefits.map((benefit: any, index: number) => (
+                      <li key={index} className="flex gap-3 items-start pb-3 border-b border-[#F2F2F2] last:border-0 last:pb-0">
+                        <CheckCircleIcon className="w-4 h-4 text-black shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="block text-[11px] font-black text-black uppercase">{benefit.label || benefit.id}</strong>
+                          <span className="block text-[10px] font-medium text-[#A0A0A0] mt-1 leading-snug">{benefit.desc || 'Benefício padronizado provisionado.'}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-[10px] font-black text-[#A0A0A0] uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <LifebuoyIcon className="w-4 h-4"/> Governança & Suporte
+                  </h3>
+                  <div className="bg-black text-white p-4 rounded-[12px] shadow-sm">
+                    <ul className="space-y-2">
+                      <li className="flex justify-between items-center text-[10px]">
+                        <span className="font-bold text-gray-400 uppercase tracking-widest">Canal de Disputa:</span>
+                        <strong className="font-mono">enterprise@horazion.com</strong>
+                      </li>
+                      <li className="flex justify-between items-center text-[10px] border-t border-white/10 pt-2 mt-2">
+                        <span className="font-bold text-gray-400 uppercase tracking-widest">Motor Lógico:</span>
+                        <strong className="text-green-400">Online & Sincronizado</strong>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Ações (Não aparecem na impressão) */}
+            <div className="mt-10 pt-6 border-t border-[#F2F2F2] flex flex-col md:flex-row justify-between items-center gap-4 no-print">
+              <div className="flex gap-3 w-full md:w-auto">
+                <HzButton onClick={handlePrintPDF} variant="ghost" className="flex-1 md:flex-none flex items-center justify-center gap-2 text-[10px] font-black text-black uppercase tracking-widest border border-[#E5E5E5] hover:bg-[#FAFAFA] px-5 py-3 rounded-[8px] transition-all">
+                  <PrinterIcon className="w-4 h-4" /> Exportar PDF / Imagem
+                </HzButton>
+                <HzButton onClick={handleCopyText} variant="ghost" className="flex-1 md:flex-none flex items-center justify-center gap-2 text-[10px] font-black text-black uppercase tracking-widest border border-[#E5E5E5] hover:bg-[#FAFAFA] px-5 py-3 rounded-[8px] transition-all">
+                  {isCopied ? <CheckCircleIcon className="w-4 h-4 text-green-600" /> : <DocumentDuplicateIcon className="w-4 h-4" />}
+                  {isCopied ? 'Copiado!' : 'Copiar Texto'}
+                </HzButton>
+              </div>
+              <HzButton onClick={handleFinishSuccess} className="w-full md:w-auto bg-black text-white px-8 py-3 rounded-[8px] text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-[#1A1A1A] transition-all">
+                Concluir Operação
+              </HzButton>
             </div>
           </div>
         </div>
       )}
 
-      {/* BUSCA E FILTROS */}
-      {!isAdding && affiliations.length > 0 && (
-        <div className="flex flex-col sm:flex-row gap-4 bg-white p-4 border border-[#F2F2F2] rounded-[12px] shadow-sm">
-          <div className="relative flex-1">
-            <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[#A0A0A0]" />
-            <input type="text" placeholder="Buscar no Grafo..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-11 pr-4 py-3 border border-[#F2F2F2] bg-[#FAFAFA] rounded-[8px] text-xs font-bold text-black focus:outline-none focus:border-black transition-colors" />
-          </div>
-          <div className="relative w-full sm:w-56">
-            <FunnelIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[#A0A0A0]" />
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full pl-11 pr-4 py-3 border border-[#F2F2F2] bg-[#FAFAFA] rounded-[8px] text-[10px] font-bold uppercase tracking-widest text-black focus:outline-none focus:border-black appearance-none cursor-pointer">
-              <option value="all">Todos</option><option value="active">Ativos</option><option value="pending">Pendentes</option>
-            </select>
-          </div>
-        </div>
-      )}
+      {/* FORMULÁRIO WIZARD (Deep B2B Form) */}
+      {isAdding && !successData && (
+        <div className="bg-white border border-black rounded-[16px] shadow-xl overflow-hidden flex flex-col lg:flex-row relative no-print">
+          <div className="absolute top-0 left-0 w-1 h-full bg-black z-10"></div>
+          
+          <div className="w-full lg:w-[40%] bg-[#FAFAFA] p-8 overflow-y-auto custom-scrollbar border-r border-[#F2F2F2] max-h-[700px]">
+            <div className="mb-6">
+              <h4 className="text-sm font-black text-black uppercase tracking-widest mb-4">1. Seleção do Hub Institucional</h4>
+              <div className="relative">
+                <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#A0A0A0]" />
+                <input type="text" placeholder="Procurar Organização..." className="w-full pl-12 pr-4 py-3 rounded-[8px] border border-[#E5E5E5] bg-white text-sm font-medium focus:border-black outline-none transition-all shadow-sm" />
+              </div>
+            </div>
 
-      {/* LISTAGEM DE CARDS PREMIUM */}
-      {!isAdding && (
-        affiliations.length === 0 ? (
-          <div className="p-20 text-center border border-[#F2F2F2] border-dashed rounded-[16px] bg-[#FAFAFA] flex flex-col items-center justify-center">
-            <BuildingOfficeIcon className="w-16 h-16 text-[#E0E0E0] mb-4" />
-            <h4 className="text-sm font-black text-black uppercase tracking-widest">Identidade Independente</h4>
-            <p className="text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest mt-2 max-w-sm">Esta conta não possui afiliação corporativa.</p>
-          </div>
-        ) : filteredAffiliations.length === 0 ? (
-          <div className="p-12 text-center text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest border border-black/5 bg-white rounded-[12px]">Nenhum vínculo corresponde aos filtros.</div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {filteredAffiliations.map((aff) => {
-              // BLINDAGEM DE ARRAYS (Para a Netlify não quebrar nunca)
-              const rawBenefits = aff.association_data?.benefits;
-              const safeBenefits = Array.isArray(rawBenefits) ? rawBenefits : [];
-              const hasBenefits = safeBenefits.length > 0;
-              
-              const isExpired = isDateExpired(aff.expires_at);
-              const brandColor = aff.entities?.metadata?.branding?.primary_color || '#000000';
-              
-              const rawOrgBenefits = aff.entities?.metadata?.defined_benefits;
-              const orgBenefitsList = Array.isArray(rawOrgBenefits) ? rawOrgBenefits : [];
-
-              return (
-                <div key={aff.id} className="bg-white border border-[#F2F2F2] rounded-[16px] p-7 flex flex-col justify-between overflow-hidden relative shadow-sm hover:shadow-lg transition-all group">
-                  <div className="absolute top-0 left-0 w-1.5 h-full transition-opacity opacity-0 group-hover:opacity-100" style={{ backgroundColor: brandColor }}></div>
-                  
-                  <div className="flex justify-between items-start border-b border-[#F2F2F2] pb-6 pl-2">
+            <div className="flex flex-col gap-3">
+              {availableOrgs.map(org => {
+                const isSelected = selectedEntityId === org.id;
+                const orgColor = org.metadata?.branding?.primary_color || '#000000';
+                return (
+                  <div 
+                    key={org.id} onClick={() => setSelectedEntityId(org.id)}
+                    className={`relative p-4 rounded-[12px] cursor-pointer transition-all border bg-white flex items-center justify-between group ${isSelected ? 'shadow-md border-transparent' : 'hover:border-black/30 border-[#E5E5E5]'}`}
+                    style={{ borderColor: isSelected ? orgColor : undefined }}
+                  >
                     <div className="flex items-center gap-4">
-                      <div className="w-16 h-16 rounded-[12px] border border-[#F2F2F2] bg-[#FAFAFA] flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
-                        {aff.entities?.logo_url ? <img src={aff.entities.logo_url} className="w-full h-full object-cover" /> : <BuildingOfficeIcon className="w-6 h-6 text-[#A0A0A0]" />}
+                      <div className="w-10 h-10 rounded-[8px] border border-[#F2F2F2] overflow-hidden bg-[#FAFAFA] flex items-center justify-center shrink-0">
+                        {org.logo_url ? <img src={org.logo_url} className="w-full h-full object-cover" /> : <BuildingOfficeIcon className="w-5 h-5 text-[#A0A0A0]" />}
                       </div>
                       <div>
-                        <h4 className="text-base font-black text-black truncate max-w-[200px]">{aff.entities?.display_name || 'Desconhecida'}</h4>
-                        <p className="text-[10px] font-mono font-bold text-[#A0A0A0] uppercase mt-1">@{aff.entities?.slug}</p>
+                        <h4 className="font-bold text-xs text-black">{org.display_name}</h4>
+                        <p className="text-[9px] text-gray-400 mt-0.5 uppercase tracking-wider font-mono">@{org.slug}</p>
                       </div>
                     </div>
-                    <span className={`text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-[0.2em] ${isExpired ? 'bg-[#A0A0A0]/10 text-[#A0A0A0] border border-[#A0A0A0]/20' : aff.status === 'active' ? 'bg-[#FAFAFA] text-black border border-[#F2F2F2]' : 'bg-[#B6192E]/10 text-[#B6192E] border border-[#B6192E]/20'}`}>
-                      {isExpired ? 'EXPIRADO' : aff.status}
-                    </span>
+                    {isSelected && <CheckCircleIcon className="w-5 h-5" style={{ color: orgColor }} />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="w-full lg:w-[60%] p-8 bg-white max-h-[700px] overflow-y-auto custom-scrollbar">
+            {selectedEntityData ? (
+              <div className="animate-in fade-in slide-in-from-right-4 duration-500 flex flex-col h-full">
+                <div className="flex-1">
+                  <h4 className="text-sm font-black text-black uppercase tracking-widest mb-6">2. Parametrização do Contrato Digital</h4>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <HzInput label="Cargo Funcional" placeholder="Ex: Engenheiro de Software" value={jobTitle} onChange={e => setJobTitle(e.target.value)} icon={BriefcaseIcon} />
+                    <HzInput label="Departamento / Organograma" placeholder="Ex: Tecnologia / Squad Alpha" value={department} onChange={e => setDepartment(e.target.value)} icon={IdentificationIcon} />
                   </div>
 
-                  <div className="py-6 grid grid-cols-2 gap-4 border-b border-[#F2F2F2] pl-2">
-                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Função / Cargo</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.association_data?.job_title || 'Membro'}</span></div>
-                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Hierarquia</span><span className="text-xs font-black text-black uppercase tracking-widest">{aff.affiliation_role}</span></div>
-                    <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1">Validade Automática</span><span className={`text-xs font-black uppercase tracking-widest ${isExpired ? 'text-[#B6192E]' : 'text-black'}`}>{safeFormatDate(aff.expires_at)}</span></div>
-                  </div>
-
-                  <div className="pt-6 pb-7 pl-2">
-                    <span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-3.5">Benefícios Ativos</span>
-                    {hasBenefits ? (
-                      <div className="flex flex-wrap gap-2.5">
-                        {safeBenefits.map((bId: string) => {
-                          const benDef = orgBenefitsList.find((def:any) => def.id === bId);
-                          const Icon = BENEFIT_ICONS[benDef?.icon_key || ''] || BENEFIT_ICONS['default'];
-                          return (
-                            <span key={bId} className="flex items-center gap-2 px-3.5 py-2 border border-[#F2F2F2] bg-[#FAFAFA] rounded-[6px] text-[10px] font-bold text-[#545454]">
-                              <Icon className="w-4 h-4 text-black" /> {benDef?.label || bId}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <span className="text-[10px] font-bold text-[#A0A0A0] italic">Nenhum benefício extra provisionado.</span>
-                    )}
-                  </div>
-
-                  <div className="flex gap-3 mt-auto pl-2">
-                    <HzButton className="flex-1 bg-white border border-[#F2F2F2] hover:border-black text-black text-[9px] font-black uppercase tracking-widest py-3 rounded-[8px] transition-all">Gerir</HzButton>
-                    <HzButton onClick={() => handleRevoke(aff.id, aff.entities?.display_name)} className="flex items-center justify-center gap-2 px-6 bg-transparent text-[#B6192E] hover:bg-[#B6192E] hover:text-white border border-[#B6192E]/30 hover:border-[#B6192E] text-[10px] font-black uppercase tracking-widest rounded-[8px] transition-all"><TrashIcon className="w-4 h-4" /></HzButton>
+                  <div className="space-y-6 mb-6">
+                    <HzInput label="Escopo de Acesso" placeholder="Ex: Acesso total aos repositórios." value={scope} onChange={e => setScope(e.target.value)} icon={DocumentTextIcon} />
+                    <HzInput label="Propósito Institucional" placeholder="Ex: Desenvolvimento contínuo." value={purpose} onChange={e => setPurpose(e.target.value)} icon={ShieldCheckIcon} />
+                    <HzInput type="date" label="Data de Expiração (Vazio para vitalício)" value={expirationDate} onChange={e => setExpirationDate(e.target.value)} icon={CalendarIcon} />
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="flex gap-4 mt-8 pt-6 border-t border-[#F2F2F2]">
+                  <HzButton variant="ghost" onClick={() => setIsAdding(false)} className="w-1/3 text-[10px] font-bold uppercase tracking-widest border border-[#F2F2F2] hover:bg-[#FAFAFA] text-black transition-colors">Cancelar Vínculo</HzButton>
+                  <button 
+                    onClick={handleAddAffiliation} disabled={isSaving} style={{ backgroundColor: primaryColor }}
+                    className="flex-1 text-white text-[10px] font-black uppercase tracking-widest py-3 rounded-[8px] hover:opacity-90 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
+                  >
+                    {isSaving ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : 'Autorizar e Provisionar Identidade'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center opacity-40 max-w-sm mx-auto text-center animate-in fade-in py-20">
+                 <div className="w-16 h-16 rounded-full border border-dashed border-black flex items-center justify-center mb-6">
+                   <LinkIcon className="w-6 h-6 text-black" />
+                 </div>
+                 <h4 className="text-sm font-black text-black uppercase tracking-widest mb-3">Aguardando Seleção</h4>
+                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#A0A0A0] leading-relaxed">Selecione o Hub na listagem ao lado para destravar os parâmetros de provisionamento estrutural.</p>
+              </div>
+            )}
           </div>
-        )
+        </div>
+      )}
+
+      {/* Listagem Estendida de Identidades Vinculadas */}
+      {!isAdding && !successData && affiliations.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-500 no-print">
+          {filteredAffiliations.map(aff => {
+            const org = aff.entities;
+            const brandColor = org?.metadata?.branding?.primary_color || '#000000';
+            const isExpired = isDateExpired(aff.expires_at);
+
+            return (
+              <div key={aff.id} className="bg-white border border-[#F2F2F2] rounded-[16px] p-7 flex flex-col justify-between overflow-hidden relative shadow-sm hover:shadow-lg transition-all group">
+                <div className="absolute top-0 left-0 w-1.5 h-full transition-opacity opacity-0 group-hover:opacity-100" style={{ backgroundColor: brandColor }}></div>
+                
+                <div className="flex justify-between items-start border-b border-[#F2F2F2] pb-6 pl-2">
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-[12px] border border-[#F2F2F2] bg-[#FAFAFA] flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
+                      {org?.logo_url ? <img src={org.logo_url} className="w-full h-full object-cover" /> : <BuildingOfficeIcon className="w-6 h-6 text-[#A0A0A0]" />}
+                    </div>
+                    <div>
+                      <h4 className="text-base font-black text-black truncate max-w-[200px]">{org?.display_name || 'Desconhecida'}</h4>
+                      <p className="text-[10px] font-mono font-bold text-[#A0A0A0] uppercase mt-1">@{org?.slug || 'hub-b2b'}</p>
+                    </div>
+                  </div>
+                  <span className={`text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-[0.2em] ${isExpired ? 'bg-[#A0A0A0]/10 text-[#A0A0A0] border border-[#A0A0A0]/20' : aff.status === 'active' ? 'bg-[#FAFAFA] text-black border border-[#F2F2F2]' : 'bg-[#B6192E]/10 text-[#B6192E] border border-[#B6192E]/20'}`}>
+                    {isExpired ? 'EXPIRADO' : aff.status}
+                  </span>
+                </div>
+
+                <div className="py-6 grid grid-cols-2 gap-4 border-b border-[#F2F2F2] pl-2">
+                  <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1.5">Cargo / Organograma</span><span className="text-xs font-black text-black uppercase tracking-widest leading-tight block">{aff.association_data?.job_title || 'Membro'} <br/><span className="text-[9px] text-[#A0A0A0]">{aff.association_data?.department || 'Geral'}</span></span></div>
+                  <div><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1.5">Expiração Contratual</span><span className={`text-xs font-black uppercase tracking-widest ${isExpired ? 'text-[#B6192E]' : 'text-black'}`}>{safeFormatDate(aff.expires_at)}</span></div>
+                  <div className="col-span-2 mt-2"><span className="block text-[9px] font-bold text-[#A0A0A0] uppercase tracking-widest mb-1.5">Propósito Sistêmico</span><span className="text-[10px] font-medium text-black line-clamp-1">{aff.association_data?.purpose || 'Conexão padrão'}</span></div>
+                </div>
+
+                <div className="flex gap-4 mt-6 pl-2">
+                  <HzButton className="flex-1 bg-white border border-[#F2F2F2] hover:border-black text-black text-[9px] font-black uppercase tracking-widest py-3 rounded-[8px] transition-all">Detalhes do Contrato</HzButton>
+                  <HzButton onClick={() => handleRevoke(aff.id, org?.display_name)} className="flex items-center justify-center gap-2 px-6 bg-transparent text-[#B6192E] hover:bg-[#B6192E] hover:text-white border border-[#B6192E]/30 hover:border-[#B6192E] text-[10px] font-black uppercase tracking-widest rounded-[8px] transition-all"><TrashIcon className="w-4 h-4" /></HzButton>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isAdding && !successData && affiliations.length === 0 && (
+        <div className="p-24 text-center border border-[#E5E5E5] border-dashed rounded-[16px] bg-white flex flex-col items-center justify-center animate-in fade-in duration-700 no-print">
+          <div className="w-20 h-20 bg-[#FAFAFA] rounded-full flex items-center justify-center shadow-sm mb-6 border border-[#F2F2F2]">
+            <BuildingOfficeIcon className="w-8 h-8 text-black" />
+          </div>
+          <h4 className="text-sm font-black text-black uppercase tracking-widest">Identidade Independente</h4>
+          <p className="text-[10px] font-bold text-[#A0A0A0] uppercase tracking-widest mt-3 max-w-sm leading-relaxed">Este HorizionID não possui arquitetura corporativa interligada. Toda governança repousa exclusivamente sobre a conta pessoal.</p>
+        </div>
       )}
     </div>
   );
